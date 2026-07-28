@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 // ignore: unused_import
 import 'package:guardianx/screens/sos_screen.dart';
 // ignore: unused_import
-import 'package:guardianx/screens/emergency_contacts_screen.dart';
+import 'package:guardianx/screens/emergency_contact_screen.dart';
 // ignore: unused_import
 import 'package:guardianx/screens/live_location_screen.dart';
 // ignore: unused_import
 import 'package:guardianx/screens/ambulance_screen.dart';
 // ignore: unused_import
 import 'package:guardianx/screens/hospital_screen.dart';
-
+// ignore: duplicate_import
+import 'emergency_contact_screen.dart';
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
@@ -165,7 +166,7 @@ class DashboardScreen extends StatelessWidget {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => const EmergencyContactsScreen(),
+                builder: (context) => const EmergencyContactScreen(),
               ),
             );
           } else if (title == 'Live Location') {
