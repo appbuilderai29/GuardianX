@@ -1,5 +1,10 @@
-import 'dart:async';
+// ignore_for_file: use_build_context_synchronously
+
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'package:guardianx/services/location_service.dart';
 
 class SosScreen extends StatefulWidget {
   const SosScreen({super.key});
@@ -9,53 +14,136 @@ class SosScreen extends StatefulWidget {
 }
 
 class _SosScreenState extends State<SosScreen> {
-  bool isCounting = false;
-  int countdown = 5;
-  Timer? timer;
+  bool isSending = false;
 
-  void startSOS() {
+  Future<void> sendSOS() async {
+    if (isSending) return;
+
     setState(() {
-      isCounting = true;
-      countdown = 5;
+      isSending = true;
     });
 
-    timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (countdown == 1) {
-        timer.cancel();
+    try {
+      // =========================================================
+      // GET LOGGED-IN USER
+      // =========================================================
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("🚨 Emergency Alert Sent Successfully"),
-            backgroundColor: Colors.red,
-          ),
-        );
+      final User? user = FirebaseAuth.instance.currentUser;
 
-        setState(() {
-          isCounting = false;
-        });
-
-        // Firebase + Location + Call API will be added here later.
-      } else {
-        setState(() {
-          countdown--;
-        });
+      if (user == null) {
+        throw Exception('Please login first.');
       }
-    });
-  }
 
-  void cancelSOS() {
-    timer?.cancel();
+      // =========================================================
+      // GET CITIZEN DATA FROM FIRESTORE
+      // =========================================================
 
-    setState(() {
-      isCounting = false;
-      countdown = 5;
-    });
-  }
+      final DocumentSnapshot<Map<String, dynamic>> userDocument =
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
 
-  @override
-  void dispose() {
-    timer?.cancel();
-    super.dispose();
+      final Map<String, dynamic>? userData =
+          userDocument.data();
+
+      final String userName =
+          userData?['fullName']?.toString() ??
+          userData?['name']?.toString() ??
+          user.displayName ??
+          user.email ??
+          'Unknown User';
+
+      final String phone =
+          userData?['phone']?.toString() ?? '';
+
+      final String email =
+          userData?['email']?.toString() ??
+          user.email ??
+          '';
+
+      final String address =
+          userData?['address']?.toString() ?? '';
+
+      // =========================================================
+      // GET CURRENT GPS LOCATION
+      // =========================================================
+
+      final position =
+          await LocationService.getCurrentLocation();
+
+      // =========================================================
+      // CREATE NEW EMERGENCY DOCUMENT
+      // =========================================================
+
+      final DocumentReference emergencyRef =
+          await FirebaseFirestore.instance
+              .collection('emergencies')
+              .add({
+        // User information
+        'userId': user.uid,
+        'userName': userName,
+        'phone': phone,
+        'email': email,
+        'address': address,
+
+        // Emergency information
+        'type': 'SOS',
+        'status': 'active',
+
+        // GPS information
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+
+        // Time
+        'createdAt': FieldValue.serverTimestamp(),
+
+        // Additional timestamp
+        'createdAtMillis':
+            DateTime.now().millisecondsSinceEpoch,
+      });
+
+      debugPrint(
+        'SOS created: ${emergencyRef.id}',
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        isSending = false;
+      });
+
+      // =========================================================
+      // SUCCESS MESSAGE
+      // =========================================================
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 5),
+          content: Text(
+            'SOS SENT SUCCESSFULLY!\n'
+            'Location: ${position.latitude}, '
+            '${position.longitude}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        isSending = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red,
+          content: Text(
+            'Unable to send SOS:\n$e',
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -64,104 +152,124 @@ class _SosScreenState extends State<SosScreen> {
       backgroundColor: Colors.black,
 
       appBar: AppBar(
-        backgroundColor: Colors.red,
         title: const Text(
-          "SOS Emergency",
-          style: TextStyle(color: Colors.white),
+          'Emergency SOS',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
         ),
+        backgroundColor: Colors.red,
+        foregroundColor: Colors.white,
       ),
 
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(25),
 
-            const Icon(
-              Icons.warning_rounded,
-              color: Colors.red,
-              size: 90,
-            ),
+          child: Column(
+            mainAxisAlignment:
+                MainAxisAlignment.center,
 
-            const SizedBox(height: 20),
-
-            const Text(
-              "Emergency SOS",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
+            children: [
+              const Icon(
+                Icons.warning_rounded,
+                color: Colors.red,
+                size: 90,
               ),
-            ),
 
-            const SizedBox(height: 15),
+              const SizedBox(height: 25),
 
-            const Text(
-              "Press the button below to request immediate help.",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 16,
-              ),
-            ),
-
-            const SizedBox(height: 40),
-
-            if (!isCounting)
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  shape: const CircleBorder(),
-                  padding: const EdgeInsets.all(55),
+              const Text(
+                'EMERGENCY',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 30,
+                  fontWeight: FontWeight.bold,
                 ),
-                onPressed: startSOS,
-                child: const Text(
-                  "SOS",
+              ),
+
+              const SizedBox(height: 10),
+
+              const Text(
+                'Press the button below to send an emergency alert.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                ),
+              ),
+
+              const SizedBox(height: 45),
+
+              // =================================================
+              // SOS BUTTON
+              // =================================================
+
+              GestureDetector(
+                onTap: isSending ? null : sendSOS,
+
+                child: Container(
+                  height: 180,
+                  width: 180,
+
+                  decoration: BoxDecoration(
+                    color: isSending
+                        ? Colors.red.shade900
+                        : Colors.red,
+
+                    shape: BoxShape.circle,
+
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.red
+                            .withValues(alpha: 0.35),
+                        blurRadius: 30,
+                        spreadRadius: 10,
+                      ),
+                    ],
+                  ),
+
+                  child: Center(
+                    child: isSending
+                        ? const CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 5,
+                          )
+                        : const Text(
+                            'SOS',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 38,
+                              fontWeight:
+                                  FontWeight.bold,
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 35),
+
+              if (isSending)
+                const Text(
+                  'Getting your location...\nSending emergency alert...',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 34,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: Colors.white70,
+                    fontSize: 15,
+                  ),
+                )
+              else
+                const Text(
+                  'Tap the SOS button in an emergency',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 14,
                   ),
                 ),
-              ),
-
-            if (isCounting)
-              Column(
-                children: [
-
-                  Text(
-                    "$countdown",
-                    style: const TextStyle(
-                      color: Colors.red,
-                      fontSize: 80,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  const SizedBox(height: 15),
-
-                  const Text(
-                    "Sending Emergency...",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                    ),
-                  ),
-
-                  const SizedBox(height: 25),
-
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey,
-                    ),
-                    onPressed: cancelSOS,
-                    child: const Text(
-                      "Cancel",
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ],
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

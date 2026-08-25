@@ -1,16 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:guardianx/screens/citizen/sos_screen.dart';
 // ignore: unused_import
-import 'package:guardianx/screens/sos_screen.dart';
-// ignore: unused_import
+
 import 'package:guardianx/screens/emergency_contact_screen.dart';
-// ignore: unused_import
 import 'package:guardianx/screens/live_location_screen.dart';
-// ignore: unused_import
 import 'package:guardianx/screens/ambulance_screen.dart';
-// ignore: unused_import
 import 'package:guardianx/screens/hospital_screen.dart';
-// ignore: duplicate_import
-import 'emergency_contact_screen.dart';
+
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
@@ -191,4 +187,9 @@ class DashboardScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+// ignore: camel_case_types
+class sosscreen {
+  const sosscreen();
 }

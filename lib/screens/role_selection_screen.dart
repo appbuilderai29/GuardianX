@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -7,29 +9,25 @@ import 'package:guardianx/screens/ambulance/ambulance_register.dart';
 import 'package:guardianx/screens/hospital/hospital_register.dart';
 import 'package:guardianx/screens/hospital/hospital_dashboard.dart';
 import 'package:guardianx/screens/police/police_register.dart';
+import 'package:guardianx/screens/police/police_dashboard.dart';
+import 'package:guardianx/screens/citizen/citizen_dashboard.dart';
 
 class RoleSelectionScreen extends StatefulWidget {
   const RoleSelectionScreen({super.key});
 
   @override
-  State<RoleSelectionScreen> createState() =>
-      _RoleSelectionScreenState();
+  State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
 }
 
-class _RoleSelectionScreenState
-    extends State<RoleSelectionScreen> {
+class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   bool isSaving = false;
 
   // ============================================================
   // SELECT ROLE
   // ============================================================
 
-  Future<void> selectRole({
-    required String role,
-    required Widget page,
-  }) async {
-    final User? user =
-        FirebaseAuth.instance.currentUser;
+  Future<void> selectRole({required String role, required Widget page}) async {
+    final User? user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -47,10 +45,6 @@ class _RoleSelectionScreenState
     });
 
     try {
-      // ========================================================
-      // GET USER DOCUMENT
-      // ========================================================
-
       final DocumentSnapshot<Map<String, dynamic>> document =
           await FirebaseFirestore.instance
               .collection('users')
@@ -60,7 +54,7 @@ class _RoleSelectionScreenState
       final data = document.data();
 
       // ========================================================
-      // HOSPITAL ALREADY REGISTERED?
+      // HOSPITAL ALREADY REGISTERED
       // ========================================================
 
       if (role == 'hospital' &&
@@ -74,17 +68,14 @@ class _RoleSelectionScreenState
 
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
-            builder: (context) =>
-                const HospitalDashboard(),
-          ),
+          MaterialPageRoute(builder: (context) => const HospitalDashboard()),
         );
 
         return;
       }
 
       // ========================================================
-      // CITIZEN ALREADY REGISTERED?
+      // CITIZEN ALREADY REGISTERED
       // ========================================================
 
       if (role == 'citizen' &&
@@ -96,38 +87,44 @@ class _RoleSelectionScreenState
           isSaving = false;
         });
 
-        // Your Citizen Dashboard is opened after registration.
-        // If you want direct Citizen Dashboard here,
-        // we can add it exactly like Hospital later.
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Citizen is already registered.',
-            ),
-            backgroundColor: Colors.green,
-          ),
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const CitizenDashboard()),
         );
 
         return;
       }
 
       // ========================================================
-      // SAVE ROLE
+      // POLICE ALREADY REGISTERED
       // ========================================================
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .set(
-        {
-          'uid': user.uid,
-          'role': role,
-          'roleSelectedAt':
-              FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+      if (role == 'police' &&
+          data != null &&
+          data['policeRegistered'] == true) {
+        if (!mounted) return;
+
+        setState(() {
+          isSaving = false;
+        });
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const PoliceDashboard()),
+        );
+
+        return;
+      }
+
+      // ========================================================
+      // SAVE SELECTED ROLE
+      // ========================================================
+
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'uid': user.uid,
+        'role': role,
+        'roleSelectedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
       if (!mounted) return;
 
@@ -139,12 +136,7 @@ class _RoleSelectionScreenState
       // OPEN REGISTRATION PAGE
       // ========================================================
 
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => page,
-        ),
-      );
+      Navigator.push(context, MaterialPageRoute(builder: (context) => page));
     } on FirebaseException catch (e) {
       if (!mounted) return;
 
@@ -154,9 +146,7 @@ class _RoleSelectionScreenState
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Firebase error: ${e.message ?? e.code}',
-          ),
+          content: Text('Firebase error: ${e.message ?? e.code}'),
           backgroundColor: Colors.red,
         ),
       );
@@ -169,9 +159,7 @@ class _RoleSelectionScreenState
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Something went wrong: $e',
-          ),
+          content: Text('Something went wrong: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -183,7 +171,6 @@ class _RoleSelectionScreenState
   // ============================================================
 
   Widget roleCard({
-    required BuildContext context,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -194,21 +181,17 @@ class _RoleSelectionScreenState
     return Card(
       color: const Color(0xFF1E1E1E),
       elevation: 8,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-      ),
+
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+
       child: ListTile(
-        contentPadding:
-            const EdgeInsets.all(18),
+        contentPadding: const EdgeInsets.all(18),
 
         leading: CircleAvatar(
           radius: 28,
           backgroundColor: color,
-          child: Icon(
-            icon,
-            color: Colors.white,
-            size: 30,
-          ),
+
+          child: Icon(icon, color: Colors.white, size: 30),
         ),
 
         title: Text(
@@ -220,25 +203,14 @@ class _RoleSelectionScreenState
           ),
         ),
 
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(
-            color: Colors.white70,
-          ),
-        ),
+        subtitle: Text(subtitle, style: const TextStyle(color: Colors.white70)),
 
-        trailing: const Icon(
-          Icons.arrow_forward_ios,
-          color: Colors.white,
-        ),
+        trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white),
 
         onTap: isSaving
             ? null
             : () {
-                selectRole(
-                  role: role,
-                  page: page,
-                );
+                selectRole(role: role, page: page);
               },
       ),
     );
@@ -256,10 +228,9 @@ class _RoleSelectionScreenState
       appBar: AppBar(
         title: const Text(
           'Select Your Role',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
+
         backgroundColor: Colors.red,
         foregroundColor: Colors.white,
         centerTitle: true,
@@ -274,12 +245,7 @@ class _RoleSelectionScreenState
               children: [
                 const SizedBox(height: 20),
 
-                // GuardianX icon
-                const Icon(
-                  Icons.security,
-                  size: 90,
-                  color: Colors.red,
-                ),
+                const Icon(Icons.security, size: 90, color: Colors.red),
 
                 const SizedBox(height: 15),
 
@@ -288,8 +254,7 @@ class _RoleSelectionScreenState
                     'GuardianX',
                     style: TextStyle(
                       fontSize: 30,
-                      fontWeight:
-                          FontWeight.bold,
+                      fontWeight: FontWeight.bold,
                       color: Colors.white,
                     ),
                   ),
@@ -300,10 +265,7 @@ class _RoleSelectionScreenState
                 const Center(
                   child: Text(
                     'Choose your role to continue',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                    ),
+                    style: TextStyle(color: Colors.white70, fontSize: 16),
                   ),
                 ),
 
@@ -312,17 +274,13 @@ class _RoleSelectionScreenState
                 // ==================================================
                 // CITIZEN
                 // ==================================================
-
                 roleCard(
-                  context: context,
                   icon: Icons.person,
                   title: 'Citizen',
-                  subtitle:
-                      'Get emergency assistance',
+                  subtitle: 'Get emergency assistance',
                   color: Colors.blue,
                   role: 'citizen',
-                  page:
-                      const CitizenRegisterScreen(),
+                  page: const CitizenRegisterScreen(),
                 ),
 
                 const SizedBox(height: 15),
@@ -330,17 +288,13 @@ class _RoleSelectionScreenState
                 // ==================================================
                 // AMBULANCE
                 // ==================================================
-
                 roleCard(
-                  context: context,
                   icon: Icons.local_shipping,
                   title: 'Ambulance Driver',
-                  subtitle:
-                      'Respond to emergency calls',
+                  subtitle: 'Respond to emergency calls',
                   color: Colors.red,
                   role: 'ambulance',
-                  page:
-                      const AmbulanceRegisterScreen(),
+                  page: const AmbulanceRegisterScreen(),
                 ),
 
                 const SizedBox(height: 15),
@@ -348,17 +302,13 @@ class _RoleSelectionScreenState
                 // ==================================================
                 // HOSPITAL
                 // ==================================================
-
                 roleCard(
-                  context: context,
                   icon: Icons.local_hospital,
                   title: 'Hospital',
-                  subtitle:
-                      'Manage emergency patients',
+                  subtitle: 'Manage emergency patients',
                   color: Colors.green,
                   role: 'hospital',
-                  page:
-                      const HospitalRegisterScreen(),
+                  page: const HospitalRegisterScreen(),
                 ),
 
                 const SizedBox(height: 15),
@@ -366,35 +316,28 @@ class _RoleSelectionScreenState
                 // ==================================================
                 // POLICE
                 // ==================================================
-
                 roleCard(
-                  context: context,
                   icon: Icons.local_police,
                   title: 'Police',
-                  subtitle:
-                      'Respond to public threats',
+                  subtitle: 'Respond to public threats',
                   color: Colors.orange,
                   role: 'police',
-                  page:
-                      const PoliceRegisterScreen(),
+                  page: const PoliceRegisterScreen(),
                 ),
-
                 const SizedBox(height: 30),
               ],
             ),
           ),
 
-          // ========================================================
+          // ======================================================
           // LOADING
-          // ========================================================
-
+          // ======================================================
           if (isSaving)
             Container(
               color: Colors.black54,
+
               child: const Center(
-                child: CircularProgressIndicator(
-                  color: Colors.red,
-                ),
+                child: CircularProgressIndicator(color: Colors.red),
               ),
             ),
         ],
