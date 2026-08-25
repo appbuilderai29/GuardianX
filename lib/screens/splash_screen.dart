@@ -40,9 +40,7 @@ class _SplashScreenState extends State<SplashScreen> {
     if (user == null) {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
-          builder: (context) => const LoginScreen(),
-        ),
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
       );
 
       return;
@@ -79,9 +77,7 @@ class _SplashScreenState extends State<SplashScreen> {
       if (!document.exists) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
-            builder: (context) => const RoleSelectionScreen(),
-          ),
+          MaterialPageRoute(builder: (context) => const RoleSelectionScreen()),
         );
 
         return;
@@ -100,21 +96,18 @@ class _SplashScreenState extends State<SplashScreen> {
       // CITIZEN REGISTERED
       // ========================================================
 
-      if (role == 'citizen' &&
-          data?['citizenRegistered'] == true) {
+      if (role == 'citizen' && data?['citizenRegistered'] == true) {
         debugPrint('CITIZEN REGISTERED');
         debugPrint('Opening Citizen Dashboard...');
 
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
-            builder: (context) => const CitizenDashboard(),
-          ),
+          MaterialPageRoute(builder: (context) => const CitizenDashboard()),
         );
 
         return;
       }
-
+      
       // ========================================================
       // CITIZEN ROLE EXISTS BUT REGISTRATION NOT COMPLETE
       // ========================================================
@@ -124,9 +117,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
-            builder: (context) => const RoleSelectionScreen(),
-          ),
+          MaterialPageRoute(builder: (context) => const RoleSelectionScreen()),
         );
 
         return;
@@ -141,9 +132,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
-            builder: (context) => const RoleSelectionScreen(),
-          ),
+          MaterialPageRoute(builder: (context) => const RoleSelectionScreen()),
         );
 
         return;
@@ -155,9 +144,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
-          builder: (context) => const RoleSelectionScreen(),
-        ),
+        MaterialPageRoute(builder: (context) => const RoleSelectionScreen()),
       );
     } catch (e) {
       // ========================================================
@@ -173,9 +160,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
-          builder: (context) => const LoginScreen(),
-        ),
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
       );
     }
   }
@@ -193,19 +178,13 @@ class _SplashScreenState extends State<SplashScreen> {
             // ==================================================
             // GUARDIANX ICON
             // ==================================================
-
-            const Icon(
-              Icons.security,
-              size: 120,
-              color: Colors.red,
-            ),
+            const Icon(Icons.security, size: 120, color: Colors.red),
 
             const SizedBox(height: 20),
 
             // ==================================================
             // GUARDIANX NAME
             // ==================================================
-
             const Text(
               'GuardianX',
               style: TextStyle(
@@ -220,13 +199,9 @@ class _SplashScreenState extends State<SplashScreen> {
             // ==================================================
             // TAGLINE
             // ==================================================
-
             const Text(
               'Every Second Matters',
-              style: TextStyle(
-                color: Colors.red,
-                fontSize: 16,
-              ),
+              style: TextStyle(color: Colors.red, fontSize: 16),
             ),
 
             const SizedBox(height: 40),
@@ -234,10 +209,7 @@ class _SplashScreenState extends State<SplashScreen> {
             // ==================================================
             // LOADING
             // ==================================================
-
-            const CircularProgressIndicator(
-              color: Colors.red,
-            ),
+            const CircularProgressIndicator(color: Colors.red),
           ],
         ),
       ),

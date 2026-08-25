@@ -3,31 +3,33 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:guardianx/screens/citizen/citizen_register.dart';
-import 'package:guardianx/screens/citizen/citizen_dashboard.dart';
 import 'package:guardianx/screens/ambulance/ambulance_register.dart';
 import 'package:guardianx/screens/hospital/hospital_register.dart';
+import 'package:guardianx/screens/hospital/hospital_dashboard.dart';
 import 'package:guardianx/screens/police/police_register.dart';
 
 class RoleSelectionScreen extends StatefulWidget {
   const RoleSelectionScreen({super.key});
 
   @override
-  State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
+  State<RoleSelectionScreen> createState() =>
+      _RoleSelectionScreenState();
 }
 
-class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
+class _RoleSelectionScreenState
+    extends State<RoleSelectionScreen> {
   bool isSaving = false;
 
   // ============================================================
   // SELECT ROLE
   // ============================================================
 
-  Future<void> selectRole({required String role, required Widget page}) async {
-    final User? user = FirebaseAuth.instance.currentUser;
-
-    // ----------------------------------------------------------
-    // CHECK LOGIN
-    // ----------------------------------------------------------
+  Future<void> selectRole({
+    required String role,
+    required Widget page,
+  }) async {
+    final User? user =
+        FirebaseAuth.instance.currentUser;
 
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -36,6 +38,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
           backgroundColor: Colors.red,
         ),
       );
+
       return;
     }
 
@@ -45,48 +48,86 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
 
     try {
       // ========================================================
-      // SPECIAL CHECK FOR CITIZEN
+      // GET USER DOCUMENT
       // ========================================================
 
-      if (role == 'citizen') {
-        final document = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
+      final DocumentSnapshot<Map<String, dynamic>> document =
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
 
-        final data = document.data();
+      final data = document.data();
 
-        final bool citizenRegistered = data?['citizenRegistered'] == true;
+      // ========================================================
+      // HOSPITAL ALREADY REGISTERED?
+      // ========================================================
 
-        // ------------------------------------------------------
-        // CITIZEN ALREADY REGISTERED
-        // ------------------------------------------------------
+      if (role == 'hospital' &&
+          data != null &&
+          data['hospitalRegistered'] == true) {
+        if (!mounted) return;
 
-        if (citizenRegistered) {
-          if (!mounted) return;
+        setState(() {
+          isSaving = false;
+        });
 
-          setState(() {
-            isSaving = false;
-          });
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                const HospitalDashboard(),
+          ),
+        );
 
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const CitizenDashboard()),
-          );
+        return;
+      }
 
-          return;
-        }
+      // ========================================================
+      // CITIZEN ALREADY REGISTERED?
+      // ========================================================
+
+      if (role == 'citizen' &&
+          data != null &&
+          data['citizenRegistered'] == true) {
+        if (!mounted) return;
+
+        setState(() {
+          isSaving = false;
+        });
+
+        // Your Citizen Dashboard is opened after registration.
+        // If you want direct Citizen Dashboard here,
+        // we can add it exactly like Hospital later.
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Citizen is already registered.',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        return;
       }
 
       // ========================================================
       // SAVE ROLE
       // ========================================================
 
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'uid': user.uid,
-        'role': role,
-        'roleSelectedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set(
+        {
+          'uid': user.uid,
+          'role': role,
+          'roleSelectedAt':
+              FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
 
       if (!mounted) return;
 
@@ -95,10 +136,15 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       });
 
       // ========================================================
-      // GO TO REGISTRATION
+      // OPEN REGISTRATION PAGE
       // ========================================================
 
-      Navigator.push(context, MaterialPageRoute(builder: (context) => page));
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => page,
+        ),
+      );
     } on FirebaseException catch (e) {
       if (!mounted) return;
 
@@ -109,8 +155,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Could not save role: '
-            '${e.message ?? e.code}',
+            'Firebase error: ${e.message ?? e.code}',
           ),
           backgroundColor: Colors.red,
         ),
@@ -124,7 +169,9 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Something went wrong: $e'),
+          content: Text(
+            'Something went wrong: $e',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -147,14 +194,21 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     return Card(
       color: const Color(0xFF1E1E1E),
       elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+      ),
       child: ListTile(
-        contentPadding: const EdgeInsets.all(18),
+        contentPadding:
+            const EdgeInsets.all(18),
 
         leading: CircleAvatar(
           radius: 28,
           backgroundColor: color,
-          child: Icon(icon, color: Colors.white, size: 30),
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: 30,
+          ),
         ),
 
         title: Text(
@@ -166,14 +220,25 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
           ),
         ),
 
-        subtitle: Text(subtitle, style: const TextStyle(color: Colors.white70)),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(
+            color: Colors.white70,
+          ),
+        ),
 
-        trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white),
+        trailing: const Icon(
+          Icons.arrow_forward_ios,
+          color: Colors.white,
+        ),
 
         onTap: isSaving
             ? null
             : () {
-                selectRole(role: role, page: page);
+                selectRole(
+                  role: role,
+                  page: page,
+                );
               },
       ),
     );
@@ -188,25 +253,18 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
 
-      // ========================================================
-      // APP BAR
-      // ========================================================
       appBar: AppBar(
         title: const Text(
           'Select Your Role',
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
         ),
-
         backgroundColor: Colors.red,
-
         foregroundColor: Colors.white,
-
         centerTitle: true,
       ),
 
-      // ========================================================
-      // BODY
-      // ========================================================
       body: Stack(
         children: [
           Padding(
@@ -216,22 +274,22 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
               children: [
                 const SizedBox(height: 20),
 
-                // ==================================================
-                // GUARDIANX ICON
-                // ==================================================
-                const Icon(Icons.security, size: 90, color: Colors.red),
+                // GuardianX icon
+                const Icon(
+                  Icons.security,
+                  size: 90,
+                  color: Colors.red,
+                ),
 
                 const SizedBox(height: 15),
 
-                // ==================================================
-                // TITLE
-                // ==================================================
                 const Center(
                   child: Text(
                     'GuardianX',
                     style: TextStyle(
                       fontSize: 30,
-                      fontWeight: FontWeight.bold,
+                      fontWeight:
+                          FontWeight.bold,
                       color: Colors.white,
                     ),
                   ),
@@ -242,7 +300,10 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 const Center(
                   child: Text(
                     'Choose your role to continue',
-                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 16,
+                    ),
                   ),
                 ),
 
@@ -251,14 +312,17 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 // ==================================================
                 // CITIZEN
                 // ==================================================
+
                 roleCard(
                   context: context,
                   icon: Icons.person,
                   title: 'Citizen',
-                  subtitle: 'Get emergency assistance',
+                  subtitle:
+                      'Get emergency assistance',
                   color: Colors.blue,
                   role: 'citizen',
-                  page: const CitizenRegisterScreen(),
+                  page:
+                      const CitizenRegisterScreen(),
                 ),
 
                 const SizedBox(height: 15),
@@ -266,14 +330,17 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 // ==================================================
                 // AMBULANCE
                 // ==================================================
+
                 roleCard(
                   context: context,
                   icon: Icons.local_shipping,
                   title: 'Ambulance Driver',
-                  subtitle: 'Respond to emergency calls',
+                  subtitle:
+                      'Respond to emergency calls',
                   color: Colors.red,
                   role: 'ambulance',
-                  page: const AmbulanceRegisterScreen(),
+                  page:
+                      const AmbulanceRegisterScreen(),
                 ),
 
                 const SizedBox(height: 15),
@@ -281,14 +348,17 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 // ==================================================
                 // HOSPITAL
                 // ==================================================
+
                 roleCard(
                   context: context,
                   icon: Icons.local_hospital,
                   title: 'Hospital',
-                  subtitle: 'Manage emergency patients',
+                  subtitle:
+                      'Manage emergency patients',
                   color: Colors.green,
                   role: 'hospital',
-                  page: const HospitalRegisterScreen(),
+                  page:
+                      const HospitalRegisterScreen(),
                 ),
 
                 const SizedBox(height: 15),
@@ -296,14 +366,17 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 // ==================================================
                 // POLICE
                 // ==================================================
+
                 roleCard(
                   context: context,
                   icon: Icons.local_police,
                   title: 'Police',
-                  subtitle: 'Respond to public threats',
+                  subtitle:
+                      'Respond to public threats',
                   color: Colors.orange,
                   role: 'police',
-                  page: const PoliceRegisterScreen(),
+                  page:
+                      const PoliceRegisterScreen(),
                 ),
 
                 const SizedBox(height: 30),
@@ -311,14 +384,17 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
             ),
           ),
 
-          // ======================================================
+          // ========================================================
           // LOADING
-          // ======================================================
+          // ========================================================
+
           if (isSaving)
             Container(
               color: Colors.black54,
               child: const Center(
-                child: CircularProgressIndicator(color: Colors.red),
+                child: CircularProgressIndicator(
+                  color: Colors.red,
+                ),
               ),
             ),
         ],
