@@ -3,7 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
+// ignore: unused_import
+import 'emergency_location_screen.dart';
 class HospitalDashboard extends StatefulWidget {
   const HospitalDashboard({super.key});
 

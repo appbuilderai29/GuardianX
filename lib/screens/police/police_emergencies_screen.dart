@@ -1,189 +1,377 @@
-// ignore_for_file: use_build_context_synchronously
 
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-class PoliceEmergenciesScreen extends StatefulWidget {
+import 'emergency_location_screen.dart';
+
+class PoliceEmergenciesScreen extends StatelessWidget {
   const PoliceEmergenciesScreen({super.key});
 
-  @override
-  State<PoliceEmergenciesScreen> createState() =>
-      _PoliceEmergenciesScreenState();
-}
+  final Color backgroundColor = const Color(0xFF101010);
+  final Color cardColor = const Color(0xFF1D1D1D);
 
-class _PoliceEmergenciesScreenState extends State<PoliceEmergenciesScreen> {
-  final CollectionReference<Map<String, dynamic>> emergenciesCollection =
-      FirebaseFirestore.instance.collection('emergencies');
+  String valueOf(
+    Map<String, dynamic> data,
+    List<String> keys, {
+    String fallback = '-',
+  }) {
+    for (final key in keys) {
+      final value = data[key];
 
-  // ============================================================
-  // UPDATE EMERGENCY STATUS
-  // ============================================================
-
-  Future<void> updateStatus(String documentId, String status) async {
-    try {
-      await emergenciesCollection.doc(documentId).update({
-        'status': status,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-      });
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Emergency status changed to ${status.toUpperCase()}'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Unable to update emergency: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  // ============================================================
-  // FORMAT DATE
-  // ============================================================
-
-  String formatDate(dynamic timestamp) {
-    if (timestamp is Timestamp) {
-      final DateTime date = timestamp.toDate();
-
-      return '${date.day.toString().padLeft(2, '0')}/'
-          '${date.month.toString().padLeft(2, '0')}/'
-          '${date.year}';
+      if (value != null && value.toString().trim().isNotEmpty) {
+        return value.toString();
+      }
     }
 
-    return 'Unknown date';
+    return fallback;
   }
 
-  // ============================================================
-  // FORMAT TIME
-  // ============================================================
+  DateTime? getCreatedAt(Map<String, dynamic> data) {
+    final value =
+        data['createdAt'] ?? data['timestamp'] ?? data['time'];
 
-  String formatTime(dynamic timestamp) {
-    if (timestamp is Timestamp) {
-      final DateTime date = timestamp.toDate();
-
-      final String hour = date.hour.toString().padLeft(2, '0');
-
-      final String minute = date.minute.toString().padLeft(2, '0');
-
-      return '$hour:$minute';
+    if (value is Timestamp) {
+      return value.toDate();
     }
 
-    return 'Unknown time';
+    if (value is DateTime) {
+      return value;
+    }
+
+    if (value is String) {
+      return DateTime.tryParse(value);
+    }
+
+    return null;
   }
 
-  // ============================================================
-  // STATUS COLOR
-  // ============================================================
+  String formatDate(Map<String, dynamic> data) {
+    final date = getCreatedAt(data);
+
+    if (date == null) {
+      return 'Time unavailable';
+    }
+
+    final localDate = date.toLocal();
+
+    String twoDigits(int number) =>
+        number.toString().padLeft(2, '0');
+
+    return '${twoDigits(localDate.day)}/'
+        '${twoDigits(localDate.month)}/'
+        '${localDate.year} '
+        '${twoDigits(localDate.hour)}:'
+        '${twoDigits(localDate.minute)}';
+  }
 
   Color statusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'responding':
-        return Colors.orange;
+    switch (status.trim().toLowerCase()) {
+      case 'active':
+      case 'new':
+      case 'pending':
+        return Colors.redAccent;
+
+      case 'in progress':
+      case 'in_progress':
+        return Colors.orangeAccent;
 
       case 'resolved':
-        return Colors.green;
-
-      case 'cancelled':
-        return Colors.grey;
+      case 'closed':
+        return Colors.greenAccent;
 
       default:
-        return Colors.red;
+        return Colors.blueGrey;
     }
   }
 
-  // ============================================================
-  // EMERGENCY CARD
-  // ============================================================
+  Map<String, dynamic> nestedLocationOf(
+    Map<String, dynamic> data,
+  ) {
+    final value = data['location'];
 
-  Widget emergencyCard(String documentId, Map<String, dynamic> data) {
-    final String citizenName =
-        data['username']?.toString() ??
-        data['fullName']?.toString() ??
-        'Unknown Citizen';
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
 
-    final String phone = data['phone']?.toString() ?? 'Not available';
+    return {};
+  }
 
-    final String address = data['address']?.toString() ?? 'Not available';
+  double? parseCoordinate(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
 
-    final String status = data['status']?.toString() ?? 'pending';
+    return double.tryParse(value?.toString() ?? '');
+  }
 
-    final dynamic createdAt = data['createdAt'];
+  Future<void> openLocation(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) async {
+    final nestedLocation = nestedLocationOf(data);
 
-    final dynamic latitude = data['latitude'];
+    final latitude = parseCoordinate(
+      data['latitude'] ??
+          data['lat'] ??
+          nestedLocation['latitude'],
+    );
 
-    final dynamic longitude = data['longitude'];
+    final longitude = parseCoordinate(
+      data['longitude'] ??
+          data['lng'] ??
+          nestedLocation['longitude'],
+    );
+
+    final hasCoordinates = latitude != null &&
+        longitude != null &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180;
+
+    final citizenName = valueOf(
+      data,
+      ['citizenName', 'fullName', 'name', 'userName'],
+      fallback: 'Citizen',
+    );
+
+    if (hasCoordinates) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => EmergencyLocationScreen(
+            latitude: latitude,
+            longitude: longitude,
+            citizenName: citizenName,
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    final address = valueOf(
+      data,
+      ['address', 'locationAddress'],
+      fallback: '',
+    );
+
+    if (address.trim().isEmpty || address == '-') {
+      showMessage(
+        context,
+        'GPS coordinates and address are unavailable.',
+      );
+      return;
+    }
+
+    final uri = Uri.https(
+      'www.google.com',
+      '/maps/search/',
+      {
+        'api': '1',
+        'query': address,
+      },
+    );
+
+    try {
+      final opened = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+
+      if (!opened && context.mounted) {
+        showMessage(context, 'Unable to open Google Maps.');
+      }
+    } catch (error) {
+      debugPrint('Map opening error: $error');
+
+      if (context.mounted) {
+        showMessage(
+          context,
+          'Unable to open the emergency location.',
+        );
+      }
+    }
+  }
+
+  Future<void> updateStatus(
+    BuildContext context, {
+    required String emergencyId,
+    required String status,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      showMessage(context, 'Please log in again.');
+      return;
+    }
+
+    try {
+      final policeDocument = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      final role = (policeDocument.data()?['role'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      if (role != 'police') {
+        if (context.mounted) {
+          showMessage(
+            context,
+            'Only police accounts can update emergency status.',
+          );
+        }
+        return;
+      }
+
+      await FirebaseFirestore.instance
+          .collection('emergencies')
+          .doc(emergencyId)
+          .update({
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': user.uid,
+      });
+
+      if (context.mounted) {
+        showMessage(context, 'Status updated to $status.');
+      }
+    } on FirebaseException catch (error) {
+      debugPrint('Firebase status update error: ${error.message}');
+
+      if (context.mounted) {
+        showMessage(
+          context,
+          'Could not update status. Check your Firestore rules.',
+        );
+      }
+    } catch (error) {
+      debugPrint('Status update error: $error');
+
+      if (context.mounted) {
+        showMessage(context, 'Something went wrong.');
+      }
+    }
+  }
+
+  static void showMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Widget statusButton(
+    BuildContext context, {
+    required String emergencyId,
+    required String status,
+    required IconData icon,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: () => updateStatus(
+        context,
+        emergencyId: emergencyId,
+        status: status,
+      ),
+      icon: Icon(icon, size: 16),
+      label: Text(status),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        side: BorderSide(color: statusColor(status)),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 8,
+        ),
+      ),
+    );
+  }
+
+  Widget emergencyCard(
+    BuildContext context,
+    QueryDocumentSnapshot<Map<String, dynamic>> document,
+  ) {
+    final data = document.data();
+
+    final citizenName = valueOf(
+      data,
+      ['citizenName', 'fullName', 'name', 'userName'],
+      fallback: 'Unknown Citizen',
+    );
+
+    final phone = valueOf(
+      data,
+      ['phone', 'phoneNumber', 'mobile'],
+    );
+
+    final address = valueOf(
+      data,
+      ['address', 'locationAddress'],
+    );
+
+    final bloodGroup = valueOf(
+      data,
+      ['bloodGroup', 'blood_group'],
+    );
+
+    final status = valueOf(
+      data,
+      ['status'],
+      fallback: 'active',
+    );
 
     return Card(
-      color: const Color(0xFF1E1E1E),
-      elevation: 6,
-      margin: const EdgeInsets.only(bottom: 18),
+      color: cardColor,
+      margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: statusColor(status).withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: statusColor(status).withValues(alpha: 0.65),
+        ),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ==================================================
-            // HEADER
-            // ==================================================
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  height: 50,
-                  width: 50,
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(
-                    Icons.warning_rounded,
-                    color: Colors.red,
-                    size: 30,
+                const CircleAvatar(
+                  backgroundColor: Color(0xFF421515),
+                  child: Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.redAccent,
                   ),
                 ),
-
                 const SizedBox(width: 12),
-
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'EMERGENCY ALERT',
-                        style: TextStyle(
-                          color: Colors.red,
-                          fontSize: 17,
+                      Text(
+                        citizenName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-
-                      const SizedBox(height: 4),
-
+                      const SizedBox(height: 5),
                       Text(
-                        // ignore: unnecessary_string_interpolations
-                        '$citizenName',
+                        'Reported: ${formatDate(data)}',
                         style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                          color: Colors.white60,
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
                 ),
-
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -197,326 +385,215 @@ class _PoliceEmergenciesScreenState extends State<PoliceEmergenciesScreen> {
                     status.toUpperCase(),
                     style: TextStyle(
                       color: statusColor(status),
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
               ],
             ),
-
-            const SizedBox(height: 18),
-
-            const Divider(color: Colors.white12),
-
-            const SizedBox(height: 12),
-
-            // ==================================================
-            // PHONE
-            // ==================================================
-            informationRow(Icons.phone, 'Phone', phone),
-
-            const SizedBox(height: 10),
-
-            // ==================================================
-            // ADDRESS
-            // ==================================================
-            informationRow(Icons.location_on, 'Address', address),
-
-            const SizedBox(height: 10),
-
-            // ==================================================
-            // DATE
-            // ==================================================
-            informationRow(Icons.calendar_today, 'Date', formatDate(createdAt)),
-
-            const SizedBox(height: 10),
-
-            // ==================================================
-            // TIME
-            // ==================================================
-            informationRow(Icons.access_time, 'Time', formatTime(createdAt)),
-
-            const SizedBox(height: 10),
-
-            // ==================================================
-            // GPS LOCATION
-            // ==================================================
-            informationRow(
-              Icons.gps_fixed,
-              'GPS',
-              latitude != null && longitude != null
-                  ? '$latitude, $longitude'
-                  : 'Location unavailable',
+            const Divider(height: 28, color: Colors.white12),
+            detailRow(Icons.phone, 'Phone', phone),
+            detailRow(Icons.location_on, 'Address', address),
+            detailRow(Icons.bloodtype, 'Blood Group', bloodGroup),
+            detailRow(
+              Icons.fingerprint,
+              'Alert ID',
+              document.id,
             ),
-
-            const SizedBox(height: 18),
-
-            // ==================================================
-            // ACTIONS
-            // ==================================================
-            if (status.toLowerCase() == 'pending')
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        updateStatus(documentId, 'responding');
-                      },
-                      icon: const Icon(Icons.local_police),
-                      label: const Text('RESPOND'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => openLocation(context, data),
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Open Emergency Location'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(
+                    color: Colors.redAccent,
                   ),
-
-                  const SizedBox(width: 10),
-
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        updateStatus(documentId, 'cancelled');
-                      },
-                      icon: const Icon(Icons.close),
-                      label: const Text('CANCEL'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white70,
-                        side: const BorderSide(color: Colors.white24),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-            // ==================================================
-            // RESPONDING
-            // ==================================================
-            if (status.toLowerCase() == 'responding')
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    updateStatus(documentId, 'resolved');
-                  },
-                  icon: const Icon(Icons.check_circle),
-                  label: const Text('MARK AS RESOLVED'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                statusButton(
+                  context,
+                  emergencyId: document.id,
+                  status: 'In Progress',
+                  icon: Icons.local_police,
+                ),
+                statusButton(
+                  context,
+                  emergencyId: document.id,
+                  status: 'Resolved',
+                  icon: Icons.check_circle_outline,
+                ),
+                statusButton(
+                  context,
+                  emergencyId: document.id,
+                  status: 'Closed',
+                  icon: Icons.cancel_outlined,
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  // ============================================================
-  // INFORMATION ROW
-  // ============================================================
-
-  Widget informationRow(IconData icon, String title, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: Colors.red, size: 20),
-
-        const SizedBox(width: 10),
-
-        Text(
-          '$title: ',
-          style: const TextStyle(
-            color: Colors.white54,
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
+  Widget detailRow(
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: Colors.redAccent, size: 19),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 88,
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white60),
+            ),
           ),
-        ),
-
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
-
-  // ============================================================
-  // BUILD
-  // ============================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
-
+      backgroundColor: backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.red,
+        backgroundColor: backgroundColor,
         foregroundColor: Colors.white,
-
         title: const Text(
           'Emergency Alerts',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-
-        centerTitle: true,
-      ),
-
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: emergenciesCollection
-            .orderBy('createdAt', descending: true)
-            .snapshots(),
-
-        builder: (context, snapshot) {
-          // ====================================================
-          // ERROR
-          // ====================================================
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(25),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.error_outline,
-                      color: Colors.red,
-                      size: 60,
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    const Text(
-                      'Unable to load emergencies',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    Text(
-                      snapshot.error.toString(),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          // ====================================================
-          // LOADING
-          // ====================================================
-
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(color: Colors.red),
-            );
-          }
-
-          final documents = snapshot.data?.docs ?? [];
-
-          // ====================================================
-          // NO EMERGENCIES
-          // ====================================================
-
-          if (documents.isEmpty) {
-            return RefreshIndicator(
-              color: Colors.red,
-
-              onRefresh: () async {
-                await Future.delayed(const Duration(milliseconds: 500));
-              },
-
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-
-                children: const [
-                  SizedBox(height: 180),
-
-                  Icon(
-                    Icons.notifications_none,
-                    color: Colors.white38,
-                    size: 70,
-                  ),
-
-                  SizedBox(height: 15),
-
-                  Center(
-                    child: Text(
-                      'No emergency requests',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-
-                  SizedBox(height: 8),
-
-                  Center(
-                    child: Text(
-                      'New citizen SOS alerts will appear here.',
-                      style: TextStyle(color: Colors.white38, fontSize: 13),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          // ====================================================
-          // EMERGENCY LIST
-          // ====================================================
-
-          return RefreshIndicator(
-            color: Colors.red,
-
-            onRefresh: () async {
-              await Future.delayed(const Duration(milliseconds: 500));
+        actions: [
+          IconButton(
+            tooltip: 'Refresh alerts',
+            onPressed: () {
+              // The Firestore stream refreshes automatically.
+              showMessage(context, 'Emergency alerts are up to date.');
             },
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: StreamBuilder<
+            QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('emergencies')
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Unable to load emergencies. Check your internet '
+                    'connection and Firestore security rules.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+              );
+            }
 
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                !snapshot.hasData) {
+              return const Center(
+                child: CircularProgressIndicator(
+                  color: Colors.redAccent,
+                ),
+              );
+            }
 
+            final documents = snapshot.data?.docs.toList() ?? [];
+
+            documents.sort((a, b) {
+              final dateA = getCreatedAt(a.data());
+              final dateB = getCreatedAt(b.data());
+
+              if (dateA == null && dateB == null) return 0;
+              if (dateA == null) return 1;
+              if (dateB == null) return -1;
+
+              return dateB.compareTo(dateA);
+            });
+
+            if (documents.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.shield_outlined,
+                        color: Colors.white38,
+                        size: 64,
+                      ),
+                      SizedBox(height: 16),
+                      Text(
+                        'No emergency alerts yet',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'New SOS alerts will appear here.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white60),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            return ListView(
               padding: const EdgeInsets.all(16),
-
-              itemCount: documents.length,
-
-              itemBuilder: (context, index) {
-                final document = documents[index];
-
-                return emergencyCard(document.id, document.data());
-              },
-            ),
-          );
-        },
+              children: [
+                Text(
+                  '${documents.length} emergency alert(s)',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                for (final document in documents)
+                  emergencyCard(context, document),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

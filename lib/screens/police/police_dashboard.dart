@@ -1,10 +1,12 @@
-// ignore_for_file: use_build_context_synchronously
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-// ignore: unused_import
+import 'package:url_launcher/url_launcher.dart';
+
+import 'police_citizens_screen.dart';
 import 'police_emergencies_screen.dart';
+
 class PoliceDashboard extends StatefulWidget {
   const PoliceDashboard({super.key});
 
@@ -13,16 +15,17 @@ class PoliceDashboard extends StatefulWidget {
 }
 
 class _PoliceDashboardState extends State<PoliceDashboard> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
   bool isLoading = true;
+  String? loadError;
 
   String officerName = 'Police Officer';
   String badgeNumber = '-';
-  String station = '-';
+  String policeStation = '-';
   String phone = '-';
   String email = '-';
   String location = '-';
-
-  String policeStatus = 'Active';
 
   @override
   void initState() {
@@ -30,703 +33,709 @@ class _PoliceDashboardState extends State<PoliceDashboard> {
     loadPoliceData();
   }
 
-  // ============================================================
-  // LOAD POLICE DATA
-  // ============================================================
-
   Future<void> loadPoliceData() async {
+    setState(() {
+      isLoading = true;
+      loadError = null;
+    });
+
     try {
-      final User? user = FirebaseAuth.instance.currentUser;
+      final user = FirebaseAuth.instance.currentUser;
 
       if (user == null) {
-        if (!mounted) return;
-
-        setState(() {
-          isLoading = false;
-        });
-
-        return;
+        throw Exception('Please sign in first.');
       }
 
-      final document = await FirebaseFirestore.instance
+      final doc = await _firestore
           .collection('users')
           .doc(user.uid)
           .get();
 
+      if (!doc.exists || doc.data() == null) {
+        throw Exception('Police profile not found.');
+      }
+
+      final data = doc.data()!;
+      final role = (data['role'] ?? '').toString().toLowerCase();
+
+      if (role != 'police') {
+        throw Exception('This account is not a police account.');
+      }
+
       if (!mounted) return;
 
-      if (!document.exists) {
-        setState(() {
-          isLoading = false;
-        });
-
-        return;
-      }
-
-      final data = document.data();
-
-      if (data == null) {
-        setState(() {
-          isLoading = false;
-        });
-
-        return;
-      }
-
       setState(() {
-        officerName =
-            data['officerName']?.toString() ??
-            data['name']?.toString() ??
-            'Police Officer';
-
-        badgeNumber =
-            data['badgeNumber']?.toString() ?? '-';
-
-        station =
-            data['policeStation']?.toString() ??
-            data['station']?.toString() ??
-            '-';
-
-        phone =
-            data['phone']?.toString() ?? '-';
-
-        email =
-            data['email']?.toString() ??
-            user.email ??
-            '-';
-
-        location =
-            data['currentLocation']?.toString() ??
-            data['location']?.toString() ??
-            '-';
-
-        policeStatus =
-            data['policeStatus']?.toString() ??
-            'Active';
-
+        officerName = _value(
+          data,
+          ['name', 'officerName', 'fullName'],
+          user.displayName ?? 'Police Officer',
+        );
+        badgeNumber = _value(data, ['badgeNumber', 'badge'], '-');
+        policeStation = _value(
+          data,
+          ['policeStation', 'station'],
+          '-',
+        );
+        phone = _value(data, ['phone'], '-');
+        email = _value(data, ['email'], user.email ?? '-');
+        location = _value(data, ['location', 'currentLocation'], '-');
         isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
-
       setState(() {
         isLoading = false;
+        loadError = e.toString().replaceFirst('Exception: ', '');
       });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Unable to load police data: $e',
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
-  // ============================================================
-  // INFORMATION CARD
-  // ============================================================
+  String _value(
+    Map<String, dynamic> data,
+    List<String> keys,
+    String fallback,
+  ) {
+    for (final key in keys) {
+      final value = data[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return fallback;
+  }
 
-  Widget informationCard({
+  void showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red.shade900,
+        ),
+      );
+  }
+
+  void openScreen(Widget screen) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => screen),
+    );
+  }
+
+  void openEmergencyAlerts() {
+    openScreen(const PoliceEmergenciesScreen());
+  }
+
+  void openLiveLocation() {
+    // Open the emergency list; select an emergency to view its location.
+    openEmergencyAlerts();
+  }
+
+  Future<void> callEmergencyNumber() async {
+    final uri = Uri(scheme: 'tel', path: '112');
+
+    try {
+      if (!await launchUrl(uri)) {
+        showMessage('Unable to open the phone dialer.');
+      }
+    } catch (_) {
+      showMessage('Unable to open the phone dialer.');
+    }
+  }
+
+  Widget dashboardCard({
     required IconData icon,
     required String title,
-    required String value,
+    required String subtitle,
     required Color color,
+    required VoidCallback onTap,
   }) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(18),
-
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
+    return Card(
+      color: const Color(0xFF1E1E1E),
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Colors.white12,
-        ),
+        side: BorderSide(color: color.withValues(alpha: 0.3)),
       ),
-
-      child: Row(
-        children: [
-          Container(
-            height: 50,
-            width: 50,
-
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(14),
-            ),
-
-            child: Icon(
-              icon,
-              color: color,
-              size: 28,
-            ),
-          ),
-
-          const SizedBox(width: 15),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                  ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-
-                const SizedBox(height: 5),
-
-                Text(
-                  value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
-                  ),
+                child: Icon(icon, color: color, size: 27),
+              ),
+              const SizedBox(height: 9),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 10,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  // ============================================================
-  // STATUS COLOR
-  // ============================================================
+  Widget emergencyAlertsCard() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _firestore.collection('emergencies').snapshots(),
+      builder: (context, snapshot) {
+        var subtitle = 'Loading alerts...';
 
-  Color getStatusColor() {
-    if (policeStatus.toLowerCase() == 'active') {
-      return Colors.green;
-    }
+        if (snapshot.hasError) {
+          subtitle = 'Unable to load alerts';
+        } else if (snapshot.hasData) {
+          final activeCount = snapshot.data!.docs.where((doc) {
+            final status = (doc.data()['status'] ?? '')
+                .toString()
+                .toLowerCase()
+                .trim();
 
-    if (policeStatus.toLowerCase() == 'busy') {
-      return Colors.orange;
-    }
+            return status == 'active' ||
+                status == 'pending' ||
+                status == 'new';
+          }).length;
 
-    return Colors.red;
+          subtitle = '$activeCount active emergencies';
+        }
+
+        return dashboardCard(
+          icon: Icons.warning_amber_rounded,
+          title: 'Emergency Alerts',
+          subtitle: subtitle,
+          color: Colors.red,
+          onTap: openEmergencyAlerts,
+        );
+      },
+    );
   }
 
-  // ============================================================
-  // BUILD
-  // ============================================================
+  Widget informationCard(String title, String value, IconData icon) {
+    return Card(
+      color: const Color(0xFF1E1E1E),
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListTile(
+        leading: Icon(icon, color: Colors.red),
+        title: Text(
+          title,
+          style: const TextStyle(color: Colors.white60, fontSize: 12),
+        ),
+        subtitle: Text(
+          value,
+          style: const TextStyle(color: Colors.white, fontSize: 15),
+        ),
+      ),
+    );
+  }
+
+  Widget policeServices() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Police Services',
+          style: TextStyle(
+            color: Colors.red,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 14),
+        GridView.count(
+          crossAxisCount: 2,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.15,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          children: [
+            emergencyAlertsCard(),
+
+            dashboardCard(
+              icon: Icons.location_on,
+              title: 'Live Location',
+              subtitle: 'View emergency locations',
+              color: Colors.blue,
+              onTap: openLiveLocation,
+            ),
+
+            dashboardCard(
+              icon: Icons.people,
+              title: 'Citizens',
+              subtitle: 'Citizen information',
+              color: Colors.green,
+              onTap: () => openScreen(
+                const PoliceCitizensScreen(),
+              ),
+            ),
+
+            dashboardCard(
+              icon: Icons.assignment,
+              title: 'Incident Reports',
+              subtitle: 'Emergency records',
+              color: Colors.orange,
+              onTap: () => openScreen(
+                const PoliceRecordsScreen(
+                  title: 'Incident Reports',
+                  collectionName: 'emergencies',
+                ),
+              ),
+            ),
+
+            dashboardCard(
+              icon: Icons.local_police,
+              title: 'Patrol Units',
+              subtitle: 'View patrol records',
+              color: Colors.purple,
+              onTap: () => openScreen(
+                const PoliceRecordsScreen(
+                  title: 'Patrol Units',
+                  collectionName: 'patrol_units',
+                ),
+              ),
+            ),
+
+            dashboardCard(
+              icon: Icons.call,
+              title: 'Emergency Calls',
+              subtitle: 'Call emergency number',
+              color: Colors.teal,
+              onTap: callEmergencyNumber,
+            ),
+
+            dashboardCard(
+              icon: Icons.notifications,
+              title: 'Notifications',
+              subtitle: 'Recent emergency records',
+              color: Colors.amber,
+              onTap: () => openScreen(
+                const PoliceRecordsScreen(
+                  title: 'Notifications',
+                  collectionName: 'emergencies',
+                ),
+              ),
+            ),
+
+            dashboardCard(
+              icon: Icons.settings,
+              title: 'Settings',
+              subtitle: 'View account information',
+              color: Colors.grey,
+              onTap: () => openScreen(
+                PoliceSettingsScreen(
+                  officerName: officerName,
+                  badgeNumber: badgeNumber,
+                  policeStation: policeStation,
+                  phone: phone,
+                  email: email,
+                  location: location,
+                  onRefresh: loadPoliceData,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-
-      // ========================================================
-      // APP BAR
-      // ========================================================
-
       appBar: AppBar(
-        backgroundColor: Colors.red,
-        foregroundColor: Colors.white,
-
         title: const Text(
           'Police Dashboard',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
-
+        backgroundColor: Colors.red,
+        foregroundColor: Colors.white,
         centerTitle: true,
-
         actions: [
           IconButton(
+            tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
-
-            onPressed: () {
-              setState(() {
-                isLoading = true;
-              });
-
-              loadPoliceData();
+            onPressed: loadPoliceData,
+          ),
+          IconButton(
+            tooltip: 'Sign out',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+              if (!mounted) return;
+              // ignore: use_build_context_synchronously
+              Navigator.of(context).pushNamedAndRemoveUntil(
+                '/',
+                (route) => false,
+              );
             },
           ),
         ],
       ),
-
-      // ========================================================
-      // BODY
-      // ========================================================
-
       body: isLoading
           ? const Center(
-              child: CircularProgressIndicator(
-                color: Colors.red,
-              ),
+              child: CircularProgressIndicator(color: Colors.red),
             )
-
-          : RefreshIndicator(
-              color: Colors.red,
-
-              onRefresh: loadPoliceData,
-
-              child: SingleChildScrollView(
-                physics:
-                    const AlwaysScrollableScrollPhysics(),
-
-                padding: const EdgeInsets.all(20),
-
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-
-                  children: [
-
-                    // ==================================================
-                    // OFFICER HEADER
-                    // ==================================================
-
-                    Container(
-                      width: double.infinity,
-
-                      padding: const EdgeInsets.all(20),
-
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E1E1E),
-
-                        borderRadius:
-                            BorderRadius.circular(20),
-
-                        border: Border.all(
-                          color: Colors.blue
-                              .withValues(alpha: 0.5),
-                        ),
-                      ),
-
-                      child: Row(
-                        children: [
-                          Container(
-                            height: 70,
-                            width: 70,
-
-                            decoration: BoxDecoration(
-                              color: Colors.blue
-                                  .withValues(alpha: 0.15),
-
-                              borderRadius:
-                                  BorderRadius.circular(18),
-                            ),
-
-                            child: const Icon(
-                              Icons.local_police,
-                              color: Colors.blue,
-                              size: 42,
-                            ),
-                          ),
-
-                          const SizedBox(width: 15),
-
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
-
-                              children: [
-                                Text(
-                                  officerName,
-
-                                  style:
-                                      const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 21,
-                                    fontWeight:
-                                        FontWeight.bold,
-                                  ),
-                                ),
-
-                                const SizedBox(height: 5),
-
-                                Text(
-                                  'Badge: $badgeNumber',
-
-                                  style:
-                                      const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 13,
-                                  ),
-                                ),
-
-                                const SizedBox(height: 3),
-
-                                Text(
-                                  station,
-
-                                  style:
-                                      const TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // ==================================================
-                    // STATUS
-                    // ==================================================
-
-                    Container(
-                      width: double.infinity,
-
-                      padding:
-                          const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 15,
-                      ),
-
-                      decoration: BoxDecoration(
-                        color: getStatusColor()
-                            .withValues(alpha: 0.12),
-
-                        borderRadius:
-                            BorderRadius.circular(15),
-
-                        border: Border.all(
-                          color: getStatusColor(),
-                        ),
-                      ),
-
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.circle,
-                            color: getStatusColor(),
-                            size: 14,
-                          ),
-
-                          const SizedBox(width: 10),
-
-                          const Text(
-                            'Police Status',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                            ),
-                          ),
-
-                          const Spacer(),
-
-                          Text(
-                            policeStatus.toUpperCase(),
-
-                            style: TextStyle(
-                              color: getStatusColor(),
-                              fontWeight:
-                                  FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 25),
-
-                    // ==================================================
-                    // EMERGENCY ALERTS
-                    // ==================================================
-
-                    const Text(
-                      'Emergency Alerts',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    Container(
-                      width: double.infinity,
-
-                      padding:
-                          const EdgeInsets.all(25),
-
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E1E1E),
-
-                        borderRadius:
-                            BorderRadius.circular(18),
-
-                        border: Border.all(
-                          color: Colors.red
-                              .withValues(alpha: 0.4),
-                        ),
-                      ),
-
-                      child: Column(
-                        children: [
-                          const Icon(
-                            Icons.warning_amber_rounded,
-                            color: Colors.red,
-                            size: 55,
-                          ),
-
-                          const SizedBox(height: 10),
-
-                          const Text(
-                            'Emergency Monitoring',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 17,
-                              fontWeight:
-                                  FontWeight.bold,
-                            ),
-                          ),
-
-                          const SizedBox(height: 6),
-
-                          const Text(
-                            'Citizen SOS requests will appear here.',
-                            textAlign: TextAlign.center,
-
-                            style: TextStyle(
-                              color: Colors.white54,
-                              fontSize: 13,
-                            ),
-                          ),
-
-                          const SizedBox(height: 18),
-
-                          SizedBox(
-                            width: double.infinity,
-
-                            child: ElevatedButton.icon(
-                              onPressed: () {},
-
-                              icon: const Icon(
-                                Icons.location_on,
-                              ),
-
-                              label: const Text(
-                                'VIEW EMERGENCY LOCATIONS',
-                              ),
-
-                              style:
-                                  ElevatedButton.styleFrom(
-                                backgroundColor:
-                                    Colors.red,
-
-                                foregroundColor:
-                                    Colors.white,
-
-                                shape:
-                                    RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(
-                                          12),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 25),
-
-                    // ==================================================
-                    // POLICE INFORMATION
-                    // ==================================================
-
-                    const Text(
-                      'Officer Information',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    informationCard(
-                      icon: Icons.person,
-                      title: 'Officer Name',
-                      value: officerName,
-                      color: Colors.blue,
-                    ),
-
-                    informationCard(
-                      icon: Icons.badge,
-                      title: 'Badge Number',
-                      value: badgeNumber,
-                      color: Colors.orange,
-                    ),
-
-                    informationCard(
-                      icon: Icons.local_police,
-                      title: 'Police Station',
-                      value: station,
-                      color: Colors.purple,
-                    ),
-
-                    informationCard(
-                      icon: Icons.phone,
-                      title: 'Phone Number',
-                      value: phone,
-                      color: Colors.green,
-                    ),
-
-                    informationCard(
-                      icon: Icons.email,
-                      title: 'Email',
-                      value: email,
-                      color: Colors.orange,
-                    ),
-
-                    informationCard(
-                      icon: Icons.location_on,
-                      title: 'Current Location',
-                      value: location,
-                      color: Colors.red,
-                    ),
-
-                    const SizedBox(height: 25),
-
-                    // ==================================================
-                    // QUICK ACTIONS
-                    // ==================================================
-
-                    const Text(
-                      'Quick Actions',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    Row(
+          : loadError != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Expanded(
-                          child: actionButton(
-                            Icons.people,
-                            'Citizens',
-                            Colors.green,
-                          ),
+                        Text(
+                          loadError!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white),
                         ),
-
-                        const SizedBox(width: 12),
-
-                        Expanded(
-                          child: actionButton(
-                            Icons.assignment,
-                            'Reports',
-                            Colors.orange,
-                          ),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: loadPoliceData,
+                          child: const Text('Try Again'),
                         ),
                       ],
                     ),
-
-                    const SizedBox(height: 12),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: actionButton(
-                            Icons.local_police,
-                            'Patrol Units',
-                            Colors.blue,
+                  ),
+                )
+              : RefreshIndicator(
+                  color: Colors.red,
+                  onRefresh: loadPoliceData,
+                  child: ListView(
+                    padding: const EdgeInsets.all(18),
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Colors.red, Color(0xFF7A0000)],
                           ),
+                          borderRadius: BorderRadius.circular(20),
                         ),
-
-                        const SizedBox(width: 12),
-
-                        Expanded(
-                          child: actionButton(
-                            Icons.notifications,
-                            'Notifications',
-                            Colors.amber,
-                          ),
+                        child: Row(
+                          children: [
+                            const CircleAvatar(
+                              radius: 30,
+                              backgroundColor: Colors.white,
+                              child: Icon(
+                                Icons.local_police,
+                                color: Colors.red,
+                                size: 36,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Welcome back,',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Text(
+                                    officerName,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 20,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Badge: $badgeNumber',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Police Information',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      informationCard(
+                        'Officer Name',
+                        officerName,
+                        Icons.person,
+                      ),
+                      informationCard(
+                        'Badge Number',
+                        badgeNumber,
+                        Icons.badge,
+                      ),
+                      informationCard(
+                        'Police Station',
+                        policeStation,
+                        Icons.local_police,
+                      ),
+                      informationCard('Phone Number', phone, Icons.phone),
+                      informationCard('Email', email, Icons.email),
+                      informationCard(
+                        'Location',
+                        location,
+                        Icons.location_on,
+                      ),
+                      const SizedBox(height: 18),
+                      policeServices(),
+                      const SizedBox(height: 28),
+                      const Center(
+                        child: Text(
+                          'GuardianX Police Emergency Response System',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+    );
+  }
+}
 
-                    const SizedBox(height: 30),
-                  ],
+// Displays records from a selected Firestore collection.
+class PoliceRecordsScreen extends StatelessWidget {
+  final String title;
+  final String collectionName;
+
+  const PoliceRecordsScreen({
+    super.key,
+    required this.title,
+    required this.collectionName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: Text(title),
+        backgroundColor: Colors.red,
+        foregroundColor: Colors.white,
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection(collectionName)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Text(
+                  'Could not load records. Check Firestore security rules '
+                  'and the collection name.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.red),
                 ),
               ),
-            ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.red),
+            );
+          }
+
+          final docs = snapshot.data?.docs ?? [];
+
+          if (docs.isEmpty) {
+            return const Center(
+              child: Text(
+                'No records found.',
+                style: TextStyle(color: Colors.white70),
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(14),
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              final doc = docs[index];
+              final data = doc.data();
+
+              final name = data['citizenName'] ??
+                  data['fullName'] ??
+                  data['name'] ??
+                  data['hospitalName'] ??
+                  'Record ${index + 1}';
+
+              final status = data['status'] ?? 'Registered';
+              final phone = data['phone'] ?? data['citizenPhone'] ?? '-';
+              final address =
+                  data['address'] ?? data['location'] ?? '-';
+
+              return Card(
+                color: const Color(0xFF1E1E1E),
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ExpansionTile(
+                  leading: const Icon(
+                    Icons.assignment,
+                    color: Colors.red,
+                  ),
+                  title: Text(
+                    name.toString(),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    'Status: $status',
+                    style: const TextStyle(color: Colors.white60),
+                  ),
+                  iconColor: Colors.red,
+                  collapsedIconColor: Colors.white70,
+                  childrenPadding: const EdgeInsets.all(16),
+                  children: [
+                    _recordDetail('Phone', phone.toString()),
+                    _recordDetail('Location', address.toString()),
+                    _recordDetail('Record ID', doc.id),
+                    if (data['latitude'] != null)
+                      _recordDetail(
+                        'Latitude',
+                        data['latitude'].toString(),
+                      ),
+                    if (data['longitude'] != null)
+                      _recordDetail(
+                        'Longitude',
+                        data['longitude'].toString(),
+                      ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
-  // ============================================================
-  // ACTION BUTTON
-  // ============================================================
-
-  Widget actionButton(
-    IconData icon,
-    String title,
-    Color color,
-  ) {
-    return Container(
-      height: 110,
-
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-
-        borderRadius: BorderRadius.circular(18),
-
-        border: Border.all(
-          color: Colors.white12,
-        ),
+  Widget _recordDetail(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white54),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
 
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+class PoliceSettingsScreen extends StatelessWidget {
+  final String officerName;
+  final String badgeNumber;
+  final String policeStation;
+  final String phone;
+  final String email;
+  final String location;
+  final Future<void> Function() onRefresh;
 
-        onTap: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('$title selected'),
-            ),
-          );
-        },
+  const PoliceSettingsScreen({
+    super.key,
+    required this.officerName,
+    required this.badgeNumber,
+    required this.policeStation,
+    required this.phone,
+    required this.email,
+    required this.location,
+    required this.onRefresh,
+  });
 
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('Account Settings'),
+        backgroundColor: Colors.red,
+        foregroundColor: Colors.white,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Icon(
+            Icons.account_circle,
+            color: Colors.red,
+            size: 80,
+          ),
+          const SizedBox(height: 18),
+          _setting('Officer Name', officerName),
+          _setting('Badge Number', badgeNumber),
+          _setting('Police Station', policeStation),
+          _setting('Phone', phone),
+          _setting('Email', email),
+          _setting('Location', location),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: () async {
+              await onRefresh();
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Profile refreshed.')),
+              );
+            },
+            icon: const Icon(Icons.refresh),
+            label: const Text('Refresh Profile'),
+          ),
+        ],
+      ),
+    );
+  }
 
-          children: [
-            Icon(
-              icon,
-              color: color,
-              size: 35,
-            ),
-
-            const SizedBox(height: 10),
-
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
+  Widget _setting(String label, String value) {
+    return Card(
+      color: const Color(0xFF1E1E1E),
+      child: ListTile(
+        title: Text(
+          label,
+          style: const TextStyle(color: Colors.white60, fontSize: 12),
+        ),
+        subtitle: Text(
+          value,
+          style: const TextStyle(color: Colors.white),
         ),
       ),
     );
