@@ -1,10 +1,10 @@
-// ignore_for_file: use_build_context_synchronously
-
+import 'dart:async';
+// ignore: unnecessary_import
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
-import 'sos_screen.dart';
+import 'package:geolocator/geolocator.dart';
 
 class CitizenDashboard extends StatefulWidget {
   const CitizenDashboard({super.key});
@@ -15,6 +15,10 @@ class CitizenDashboard extends StatefulWidget {
 
 class _CitizenDashboardState extends State<CitizenDashboard> {
   bool isLoading = true;
+  bool _handlingSOS = false;
+
+  int _tapCount = 0;
+  DateTime? _lastTap;
 
   String fullName = '';
   String email = '';
@@ -28,23 +32,34 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
   void initState() {
     super.initState();
     loadCitizenData();
+    _syncProtectionState();
   }
 
-  // ============================================================
-  // LOAD CITIZEN DATA
-  // ============================================================
+  // ignore: unused_element
+  Future<void> _syncProtectionState() async {
+    try {
+      final bool running =
+          await _protectionChannel.invokeMethod<bool>('isProtectionRunning') ??
+          false;
+
+      if (!mounted) return;
+
+      setState(() {
+        _protectionEnabled = running;
+      });
+    } on PlatformException {
+      // Keep the current UI state if Android cannot be queried.
+    } on MissingPluginException {
+      // The native channel is unavailable.
+    }
+  }
 
   Future<void> loadCitizenData() async {
     try {
-      final User? user = FirebaseAuth.instance.currentUser;
+      final user = FirebaseAuth.instance.currentUser;
 
       if (user == null) {
-        if (!mounted) return;
-
-        setState(() {
-          isLoading = false;
-        });
-
+        if (mounted) setState(() => isLoading = false);
         return;
       }
 
@@ -55,511 +70,333 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
 
       if (!mounted) return;
 
-      if (!document.exists) {
-        setState(() {
-          isLoading = false;
-        });
-
-        return;
-      }
-
-      final data = document.data();
+      final data = document.data() ?? {};
 
       setState(() {
         fullName =
-            data?['fullName']?.toString() ??
-            user.displayName ??
-            'Citizen';
-
-        email =
-            data?['email']?.toString() ??
-            user.email ??
-            '';
-
-        phone =
-            data?['phone']?.toString() ??
-            '';
-
-        address =
-            data?['address']?.toString() ??
-            '';
-
-        bloodGroup =
-            data?['bloodGroup']?.toString() ??
-            '';
-
-        emergencyContact1 =
-            data?['emergencyContact1']?.toString() ??
-            '';
-
-        emergencyContact2 =
-            data?['emergencyContact2']?.toString() ??
-            '';
-
+            data['fullName']?.toString() ?? user.displayName ?? 'Citizen';
+        email = data['email']?.toString() ?? user.email ?? '';
+        phone = data['phone']?.toString() ?? '';
+        address = data['address']?.toString() ?? '';
+        bloodGroup = data['bloodGroup']?.toString() ?? '';
+        emergencyContact1 = data['emergencyContact1']?.toString() ?? '';
+        emergencyContact2 = data['emergencyContact2']?.toString() ?? '';
         isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
 
-      setState(() {
-        isLoading = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Unable to load your information: $e',
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+      setState(() => isLoading = false);
+      _showMessage('Unable to load your information: $e');
     }
   }
 
-  // ============================================================
-  // INFORMATION CARD
-  // ============================================================
+  void _showMessage(String message) {
+    if (!mounted) return;
 
-  Widget informationCard({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // Detect three quick taps while the dashboard is visible.
+  void _handleScreenTap() {
+    if (_handlingSOS) return;
+
+    final now = DateTime.now();
+
+    if (_lastTap == null ||
+        now.difference(_lastTap!) > const Duration(milliseconds: 1200)) {
+      _tapCount = 1;
+    } else {
+      _tapCount++;
+    }
+
+    _lastTap = now;
+
+    if (_tapCount >= 3) {
+      _tapCount = 0;
+      _lastTap = null;
+      _confirmSOS();
+    }
+  }
+
+  static const MethodChannel _protectionChannel = MethodChannel(
+    'com.example.guardianx/back_tap',
+  );
+
+  bool _protectionEnabled = false;
+  bool _protectionLoading = false;
+
+  // ignore: unused_element
+  Future<void> _toggleProtection() async {
+    if (_protectionLoading) return;
+
+    setState(() => _protectionLoading = true);
+
+    try {
+      if (_protectionEnabled) {
+        await _protectionChannel.invokeMethod('stopProtection');
+        setState(() => _protectionEnabled = false);
+      } else {
+        await _protectionChannel.invokeMethod('startProtection');
+        setState(() => _protectionEnabled = true);
+      }
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Protection error: ${e.message}')));
+    } on MissingPluginException {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Protection service connection not found.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _protectionLoading = false);
+      }
+    }
+  }
+
+  Future<void> _confirmSOS() async {
+    if (_handlingSOS || !mounted) return;
+
+    _handlingSOS = true;
+    bool cancelled = false;
+    int secondsLeft = 5;
+    Timer? countdownTimer;
+
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (
+                timer,
+              ) {
+                if (secondsLeft <= 1) {
+                  timer.cancel();
+                  countdownTimer = null;
+
+                  if (Navigator.of(dialogContext).canPop()) {
+                    Navigator.of(dialogContext).pop(true);
+                  }
+                } else {
+                  secondsLeft--;
+
+                  setDialogState(() {});
+                }
+              });
+
+              return AlertDialog(
+                title: const Text('Emergency SOS'),
+                content: Text(
+                  'SOS will be sent in $secondsLeft seconds '
+                  'unless you cancel.\n\n'
+                  'Cancel if this was an accidental tap.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      cancelled = true;
+                      countdownTimer?.cancel();
+                      countdownTimer = null;
+                      Navigator.of(dialogContext).pop(false);
+                    },
+                    child: const Text('CANCEL'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      countdownTimer?.cancel();
+      countdownTimer = null;
+
+      if (confirmed == true && !cancelled && mounted) {
+        await _sendSOS();
+      }
+    } catch (e) {
+      _showMessage('Could not trigger SOS: $e');
+    } finally {
+      countdownTimer?.cancel();
+      _handlingSOS = false;
+    }
+  }
+
+  // Save an emergency record to Firestore.
+  Future<void> _sendSOS() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      _showMessage('Please log in before sending SOS.');
+      return;
+    }
+
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      _showMessage('Please enable location on your phone.');
+      return;
+    }
+
+    var permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      _showMessage('Location permission is required.');
+      return;
+    }
+
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    );
+
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    final profile = userDoc.data() ?? {};
+
+    await FirebaseFirestore.instance.collection('emergencies').add({
+      'userId': user.uid,
+      'userName': profile['fullName'] ?? user.displayName ?? 'Citizen',
+      'phone': profile['phone'] ?? '',
+      'email': user.email ?? '',
+      'address': profile['address'] ?? '',
+      'type': 'SOS',
+      'status': 'active',
+      'latitude': position.latitude,
+      'longitude': position.longitude,
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdAtMillis': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    _showMessage('SOS emergency record created.');
+  }
+
+  Widget _sectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24, bottom: 12),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.red,
+          fontSize: 21,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _infoCard(IconData icon, String title, String value) {
     return Card(
       color: const Color(0xFF1E1E1E),
-      elevation: 5,
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(15),
-      ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 8,
-        ),
         leading: CircleAvatar(
           backgroundColor: Colors.red,
-          child: Icon(
-            icon,
-            color: Colors.white,
-          ),
+          child: Icon(icon, color: Colors.white),
         ),
-        title: Text(
-          title,
+        title: Text(title, style: const TextStyle(color: Colors.white70)),
+        subtitle: Text(
+          value.isEmpty ? 'Not provided' : value,
           style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 13,
-          ),
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            value.isEmpty ? 'Not provided' : value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
           ),
         ),
       ),
     );
   }
 
-  // ============================================================
-  // EMERGENCY CONTACT CARD
-  // ============================================================
-
-  Widget emergencyCard({
-    required String title,
-    required String number,
-  }) {
+  Widget _contactCard(String title, String number) {
     return Card(
       color: const Color(0xFF2A1515),
-      elevation: 5,
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(15),
-        side: const BorderSide(
-          color: Colors.red,
-          width: 1,
-        ),
+        side: const BorderSide(color: Colors.red),
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 8,
-        ),
         leading: const CircleAvatar(
           backgroundColor: Colors.red,
-          child: Icon(
-            Icons.emergency,
-            color: Colors.white,
-          ),
+          child: Icon(Icons.emergency, color: Colors.white),
         ),
-        title: Text(
-          title,
+        title: Text(title, style: const TextStyle(color: Colors.white70)),
+        subtitle: Text(
+          number.isEmpty ? 'Not provided' : number,
           style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 13,
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
           ),
         ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            number.isEmpty ? 'Not provided' : number,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-        trailing: IconButton(
-          icon: const Icon(
-            Icons.phone,
-            color: Colors.green,
-          ),
-          onPressed: number.isEmpty
-              ? null
-              : () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Calling $number',
-                      ),
-                    ),
-                  );
-                },
-        ),
+        trailing: const Icon(Icons.phone, color: Colors.green),
       ),
     );
   }
 
-  // ============================================================
-  // HOSPITAL CARD
-  // ============================================================
-
-  Widget hospitalCard(
-    DocumentSnapshot<Map<String, dynamic>> document,
-  ) {
-    final data = document.data() ?? {};
-
-    final String hospitalName =
-        data['hospitalName']?.toString() ??
-        'Hospital';
-
-    final String hospitalId =
-        data['hospitalId']?.toString() ??
-        '-';
-
-    final String hospitalType =
-        data['hospitalType']?.toString() ??
-        '-';
-
-    final String hospitalPhone =
-        data['phone']?.toString() ??
-        '-';
-
-    final String hospitalEmail =
-        data['email']?.toString() ??
-        '-';
-
-    final String hospitalAddress =
-        data['address']?.toString() ??
-        '-';
-
-    final int availableBeds =
-        _toInt(data['availableBeds']);
-
-    final int icuBeds =
-        _toInt(data['icuBeds']);
-
-    final int ambulanceCount =
-        _toInt(data['ambulanceCount']);
-
-    final String status =
-        data['hospitalStatus']?.toString() ??
-        'active';
-
-    final bool isActive =
-        status.toLowerCase() == 'active';
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(
-        bottom: 18,
-      ),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.red.withValues(
-            alpha: 0.5,
-          ),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-
-          // ==================================================
-          // HOSPITAL HEADER
-          // ==================================================
-
-          Row(
-            children: [
-              Container(
-                height: 58,
-                width: 58,
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(
-                    alpha: 0.15,
-                  ),
-                  borderRadius:
-                      BorderRadius.circular(15),
-                ),
-                child: const Icon(
-                  Icons.local_hospital,
-                  color: Colors.red,
-                  size: 32,
-                ),
-              ),
-
-              const SizedBox(width: 14),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      hospitalName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 19,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 5),
-
-                    Text(
-                      'Hospital ID: $hospitalId',
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: isActive
-                      ? Colors.green
-                      : Colors.red,
-                  borderRadius:
-                      BorderRadius.circular(20),
-                ),
-                child: Text(
-                  isActive
-                      ? 'ACTIVE'
-                      : 'INACTIVE',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 18),
-
-          // ==================================================
-          // HOSPITAL TYPE
-          // ==================================================
-
-          hospitalDetailRow(
-            Icons.category,
-            'Type',
-            hospitalType,
-          ),
-
-          hospitalDetailRow(
-            Icons.phone,
-            'Phone',
-            hospitalPhone,
-          ),
-
-          hospitalDetailRow(
-            Icons.email,
-            'Email',
-            hospitalEmail,
-          ),
-
-          hospitalDetailRow(
-            Icons.location_on,
-            'Address',
-            hospitalAddress,
-          ),
-
-          const SizedBox(height: 12),
-
-          // ==================================================
-          // CAPACITY
-          // ==================================================
-
-          const Text(
-            'Emergency Capacity',
-            style: TextStyle(
-              color: Colors.red,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          Row(
-            children: [
-
-              hospitalCapacity(
-                Icons.bed,
-                'Beds',
-                availableBeds,
-                Colors.blue,
-              ),
-
-              const SizedBox(width: 8),
-
-              hospitalCapacity(
-                Icons.monitor_heart,
-                'ICU',
-                icuBeds,
-                Colors.red,
-              ),
-
-              const SizedBox(width: 8),
-
-              hospitalCapacity(
-                Icons.local_shipping,
-                'Ambulance',
-                ambulanceCount,
-                Colors.orange,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+  int _toInt(dynamic value) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  // ============================================================
-  // HOSPITAL DETAIL ROW
-  // ============================================================
+  Widget _hospitalCard(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data();
 
-  Widget hospitalDetailRow(
-    IconData icon,
-    String title,
-    String value,
-  ) {
-    return Padding(
-      padding:
-          const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-          Icon(
-            icon,
-            color: Colors.white54,
-            size: 20,
-          ),
-
-          const SizedBox(width: 10),
-
-          Text(
-            '$title: ',
-            style: const TextStyle(
-              color: Colors.white60,
-              fontSize: 13,
-            ),
-          ),
-
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // HOSPITAL CAPACITY
-  // ============================================================
-
-  Widget hospitalCapacity(
-    IconData icon,
-    String title,
-    int value,
-    Color color,
-  ) {
-    return Expanded(
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(
-          vertical: 12,
-        ),
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius:
-              BorderRadius.circular(12),
-        ),
+    return Card(
+      color: const Color(0xFF1E1E1E),
+      margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              icon,
-              color: color,
-              size: 24,
-            ),
-
-            const SizedBox(height: 5),
-
             Text(
-              value.toString(),
+              data['hospitalName']?.toString() ?? 'Hospital',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 19,
-                fontWeight:
-                    FontWeight.bold,
+                fontWeight: FontWeight.bold,
               ),
             ),
-
+            const SizedBox(height: 8),
             Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white60,
-                fontSize: 11,
-              ),
+              'Hospital ID: ${data['hospitalId'] ?? '-'}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            Text(
+              'Type: ${data['hospitalType'] ?? '-'}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            Text(
+              'Phone: ${data['phone'] ?? '-'}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            Text(
+              'Address: ${data['address'] ?? '-'}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const Divider(color: Colors.white24),
+            Text(
+              'Beds: ${_toInt(data['availableBeds'])}   '
+              'ICU: ${_toInt(data['icuBeds'])}   '
+              'Ambulances: ${_toInt(data['ambulanceCount'])}',
+              style: const TextStyle(color: Colors.white),
             ),
           ],
         ),
@@ -567,542 +404,211 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
     );
   }
 
-  // ============================================================
-  // CONVERT FIRESTORE NUMBER
-  // ============================================================
-
-  int _toInt(dynamic value) {
-    if (value is int) {
-      return value;
-    }
-
-    if (value is double) {
-      return value.toInt();
-    }
-
-    return int.tryParse(
-          value?.toString() ?? '',
-        ) ??
-        0;
-  }
-
-  // ============================================================
-  // BUILD
-  // ============================================================
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-
       appBar: AppBar(
         backgroundColor: Colors.red,
         foregroundColor: Colors.white,
-
         title: const Text(
           'Citizen Dashboard',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
-
         centerTitle: true,
-
         actions: [
           IconButton(
-            icon: const Icon(
-              Icons.refresh,
-            ),
+            icon: const Icon(Icons.refresh),
             onPressed: () {
-              setState(() {
-                isLoading = true;
-              });
-
+              setState(() => isLoading = true);
               loadCitizenData();
             },
           ),
         ],
       ),
 
-      body: isLoading
-          ? const Center(
-              child:
-                  CircularProgressIndicator(
+      // The listener is inside Scaffold, so the dialog has
+      // access to the app's Navigator.
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _handleScreenTap(),
+        child: isLoading
+            ? const Center(child: CircularProgressIndicator(color: Colors.red))
+            : RefreshIndicator(
                 color: Colors.red,
-              ),
-            )
-          : RefreshIndicator(
-              color: Colors.red,
-              onRefresh: loadCitizenData,
-
-              child: SingleChildScrollView(
-                physics:
-                    const AlwaysScrollableScrollPhysics(),
-
-                padding:
-                    const EdgeInsets.all(20),
-
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-
-                  children: [
-
-                    // ==================================================
-                    // WELCOME
-                    // ==================================================
-
-                    Container(
-                      width: double.infinity,
-                      padding:
-                          const EdgeInsets.all(20),
-
-                      decoration:
-                          BoxDecoration(
-                        gradient:
-                            const LinearGradient(
-                          colors: [
-                            Colors.red,
-                            Color(0xFF7A0000),
+                onRefresh: loadCitizenData,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Colors.red, Color(0xFF7A0000)],
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          children: [
+                            const CircleAvatar(
+                              radius: 32,
+                              backgroundColor: Colors.white,
+                              child: Icon(
+                                Icons.person,
+                                color: Colors.red,
+                                size: 38,
+                              ),
+                            ),
+                            const SizedBox(width: 15),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Welcome back,',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Text(
+                                    fullName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 23,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const Text(
+                                    'GuardianX Citizen',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
-                        borderRadius:
-                            BorderRadius.circular(
-                          20,
+                      ),
+
+                      const SizedBox(height: 25),
+
+                      SizedBox(
+                        width: double.infinity,
+                        height: 85,
+                        child: ElevatedButton(
+                          onPressed: _confirmSOS,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.warning_rounded, size: 35),
+                              SizedBox(width: 15),
+                              Text(
+                                'EMERGENCY SOS',
+                                style: TextStyle(
+                                  fontSize: 21,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _protectionLoading
+                            ? null
+                            : _toggleProtection,
+                        icon: Icon(
+                          _protectionEnabled
+                              ? Icons.shield
+                              : Icons.shield_outlined,
+                        ),
+                        label: Text(
+                          _protectionLoading
+                              ? 'Please wait...'
+                              : _protectionEnabled
+                              ? 'Stop Protection'
+                              : 'Start Protection',
                         ),
                       ),
 
-                      child: Row(
-                        children: [
+                      _sectionTitle('My Information'),
+                      _infoCard(Icons.person, 'Full Name', fullName),
+                      _infoCard(Icons.email, 'Email', email),
+                      _infoCard(Icons.phone, 'Phone Number', phone),
+                      _infoCard(Icons.location_on, 'Address', address),
+                      _infoCard(Icons.bloodtype, 'Blood Group', bloodGroup),
 
-                          const CircleAvatar(
-                            radius: 32,
-                            backgroundColor:
-                                Colors.white,
-                            child: Icon(
-                              Icons.person,
-                              color: Colors.red,
-                              size: 38,
-                            ),
-                          ),
+                      _sectionTitle('Emergency Contacts'),
+                      _contactCard('Emergency Contact 1', emergencyContact1),
+                      _contactCard('Emergency Contact 2', emergencyContact2),
 
-                          const SizedBox(
-                            width: 15,
-                          ),
-
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment
-                                      .start,
-
-                              children: [
-
-                                const Text(
-                                  'Welcome back,',
-                                  style: TextStyle(
-                                    color:
-                                        Colors.white70,
-                                    fontSize: 14,
-                                  ),
-                                ),
-
-                                const SizedBox(
-                                  height: 3,
-                                ),
-
-                                Text(
-                                  fullName,
-                                  maxLines: 1,
-                                  overflow:
-                                      TextOverflow
-                                          .ellipsis,
-
-                                  style:
-                                      const TextStyle(
-                                    color:
-                                        Colors.white,
-                                    fontSize: 23,
-                                    fontWeight:
-                                        FontWeight.bold,
-                                  ),
-                                ),
-
-                                const SizedBox(
-                                  height: 3,
-                                ),
-
-                                const Text(
-                                  'GuardianX Citizen',
-                                  style: TextStyle(
-                                    color:
-                                        Colors.white70,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                      _sectionTitle('Registered Hospitals'),
+                      const Text(
+                        'Hospitals available through GuardianX',
+                        style: TextStyle(color: Colors.white60),
                       ),
-                    ),
+                      const SizedBox(height: 14),
 
-                    const SizedBox(
-                      height: 25,
-                    ),
+                      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                        stream: FirebaseFirestore.instance
+                            .collection('users')
+                            .where('role', isEqualTo: 'hospital')
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          if (snapshot.hasError) {
+                            return Text(
+                              'Unable to load hospitals: ${snapshot.error}',
+                              style: const TextStyle(color: Colors.red),
+                            );
+                          }
 
-                    // ==================================================
-                    // SOS BUTTON
-                    // ==================================================
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(
+                                color: Colors.red,
+                              ),
+                            );
+                          }
 
-                    SizedBox(
-                      width: double.infinity,
-                      height: 85,
+                          final hospitals = snapshot.data?.docs ?? [];
 
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  const SosScreen(),
-                            ),
+                          if (hospitals.isEmpty) {
+                            return const Text(
+                              'No hospitals registered yet.',
+                              style: TextStyle(color: Colors.white70),
+                            );
+                          }
+
+                          return Column(
+                            children: hospitals.map(_hospitalCard).toList(),
                           );
                         },
+                      ),
 
-                        style:
-                            ElevatedButton.styleFrom(
-                          backgroundColor:
-                              Colors.red,
-                          foregroundColor:
-                              Colors.white,
-
-                          shape:
-                              RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(
-                              18,
-                            ),
-                          ),
-                        ),
-
-                        child: Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment
-                                  .center,
-
-                          children: const [
-                            Icon(
-                              Icons.warning_rounded,
-                              size: 35,
-                            ),
-
-                            SizedBox(
-                              width: 15,
-                            ),
-
-                            Text(
-                              'EMERGENCY SOS',
-                              style: TextStyle(
-                                fontSize: 21,
-                                fontWeight:
-                                    FontWeight.bold,
-                              ),
-                            ),
-                          ],
+                      const SizedBox(height: 20),
+                      const Center(
+                        child: Text(
+                          'Your information is securely stored in GuardianX',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white38, fontSize: 12),
                         ),
                       ),
-                    ),
-
-                    const SizedBox(
-                      height: 30,
-                    ),
-
-                    // ==================================================
-                    // MY INFORMATION
-                    // ==================================================
-
-                    const Text(
-                      'My Information',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 21,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 15,
-                    ),
-
-                    informationCard(
-                      icon: Icons.person,
-                      title: 'Full Name',
-                      value: fullName,
-                    ),
-
-                    informationCard(
-                      icon: Icons.email,
-                      title: 'Email',
-                      value: email,
-                    ),
-
-                    informationCard(
-                      icon: Icons.phone,
-                      title: 'Phone Number',
-                      value: phone,
-                    ),
-
-                    informationCard(
-                      icon: Icons.location_on,
-                      title: 'Address',
-                      value: address,
-                    ),
-
-                    informationCard(
-                      icon: Icons.bloodtype,
-                      title: 'Blood Group',
-                      value: bloodGroup,
-                    ),
-
-                    const SizedBox(
-                      height: 20,
-                    ),
-
-                    // ==================================================
-                    // EMERGENCY CONTACTS
-                    // ==================================================
-
-                    const Text(
-                      'Emergency Contacts',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 21,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 15,
-                    ),
-
-                    emergencyCard(
-                      title:
-                          'Emergency Contact 1',
-                      number:
-                          emergencyContact1,
-                    ),
-
-                    emergencyCard(
-                      title:
-                          'Emergency Contact 2',
-                      number:
-                          emergencyContact2,
-                    ),
-
-                    const SizedBox(
-                      height: 25,
-                    ),
-
-                    // ==================================================
-                    // HOSPITALS
-                    // ==================================================
-
-                    const Text(
-                      'Registered Hospitals',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 21,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 8,
-                    ),
-
-                    const Text(
-                      'Hospitals available through GuardianX',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 13,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 15,
-                    ),
-
-                    // ==================================================
-                    // LOAD HOSPITALS
-                    // ==================================================
-
-                    StreamBuilder<
-                        QuerySnapshot<
-                            Map<String,
-                                dynamic>>>(
-                      stream:
-                          FirebaseFirestore
-                              .instance
-                              .collection('users')
-                              .where(
-                                'role',
-                                isEqualTo:
-                                    'hospital',
-                              )
-                              .snapshots(),
-
-                      builder:
-                          (context, snapshot) {
-
-                        if (snapshot
-                            .connectionState ==
-                            ConnectionState
-                                .waiting) {
-                          return const Center(
-                            child:
-                                Padding(
-                              padding:
-                                  EdgeInsets.all(
-                                25,
-                              ),
-                              child:
-                                  CircularProgressIndicator(
-                                color:
-                                    Colors.red,
-                              ),
-                            ),
-                          );
-                        }
-
-                        if (snapshot.hasError) {
-                          return Container(
-                            width:
-                                double.infinity,
-                            padding:
-                                const EdgeInsets
-                                    .all(20),
-                            decoration:
-                                BoxDecoration(
-                              color:
-                                  const Color(
-                                0xFF1E1E1E,
-                              ),
-                              borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                18,
-                              ),
-                            ),
-                            child: Text(
-                              'Unable to load hospitals:\n${snapshot.error}',
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.red,
-                                fontSize: 13,
-                              ),
-                            ),
-                          );
-                        }
-
-                        final hospitals =
-                            snapshot.data?.docs ??
-                                [];
-
-                        if (hospitals.isEmpty) {
-                          return Container(
-                            width:
-                                double.infinity,
-                            padding:
-                                const EdgeInsets
-                                    .all(25),
-                            decoration:
-                                BoxDecoration(
-                              color:
-                                  const Color(
-                                0xFF1E1E1E,
-                              ),
-                              borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                18,
-                              ),
-                            ),
-                            child:
-                                const Column(
-                              children: [
-                                Icon(
-                                  Icons
-                                      .local_hospital_outlined,
-                                  color:
-                                      Colors.white38,
-                                  size: 50,
-                                ),
-                                SizedBox(
-                                  height: 10,
-                                ),
-                                Text(
-                                  'No hospitals registered yet',
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.white70,
-                                    fontSize:
-                                        15,
-                                    fontWeight:
-                                        FontWeight
-                                            .bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-
-                        return Column(
-                          children:
-                              hospitals.map(
-                            (hospital) {
-                              return hospitalCard(
-                                hospital,
-                              );
-                            },
-                          ).toList(),
-                        );
-                      },
-                    ),
-
-                    const SizedBox(
-                      height: 25,
-                    ),
-
-                    // ==================================================
-                    // FOOTER
-                    // ==================================================
-
-                    const Center(
-                      child: Text(
-                        'Your information is securely stored in GuardianX',
-                        textAlign:
-                            TextAlign.center,
-                        style: TextStyle(
-                          color:
-                              Colors.white38,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 20,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
+      ),
     );
   }
 }

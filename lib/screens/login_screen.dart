@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'register_screen.dart';
 import 'role_selection_screen.dart';
+// ignore: unused_import
+import 'package:guardianx/services/ambulance_profile_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
