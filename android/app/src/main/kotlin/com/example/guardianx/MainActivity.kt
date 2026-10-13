@@ -83,13 +83,17 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "getPendingGestureSOS" -> {
-                    result.success(pendingGestureSOS)
-                }
+    result.success(
+        pendingGestureSOS ||
+            intent?.getBooleanExtra("guardianx_gesture_sos", false) == true
+    )
+}
 
-                "clearPendingGestureSOS" -> {
-                    pendingGestureSOS = false
-                    result.success(true)
-                }
+"clearPendingGestureSOS" -> {
+    pendingGestureSOS = false
+    intent?.removeExtra("guardianx_gesture_sos")
+    result.success(true)
+}
 
                 else -> result.notImplemented()
             }

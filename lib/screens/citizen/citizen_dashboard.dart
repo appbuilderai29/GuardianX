@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:guardianx/screens/citizen/gesture_sos_screen.dart';
 
 class CitizenDashboard extends StatefulWidget {
   const CitizenDashboard({super.key});
@@ -31,6 +32,11 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
   @override
   void initState() {
     super.initState();
+
+    // Check the gesture alert as early as possible.
+    _checkPendingGestureSOS();
+
+    // Keep existing dashboard initialization.
     loadCitizenData();
     _syncProtectionState();
   }
@@ -124,6 +130,32 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
   static const MethodChannel _protectionChannel = MethodChannel(
     'com.example.guardianx/back_tap',
   );
+
+  // ignore: unused_element
+
+  Future<void> _checkPendingGestureSOS() async {
+    try {
+      final bool pending =
+          await _protectionChannel.invokeMethod<bool>('getPendingGestureSOS') ??
+          false;
+
+      debugPrint('GESTURE SOS PENDING: $pending');
+
+      if (!mounted || !pending) return;
+
+      // Open the confirmation screen immediately.
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const GestureSosScreen()));
+
+      // Clear the native pending flag after returning.
+      await _protectionChannel.invokeMethod('clearPendingGestureSOS');
+    } on PlatformException catch (e) {
+      debugPrint('Gesture SOS error: ${e.message}');
+    } on MissingPluginException {
+      debugPrint('Gesture SOS channel unavailable');
+    }
+  }
 
   bool _protectionEnabled = false;
   bool _protectionLoading = false;
@@ -422,6 +454,21 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
             onPressed: () {
               setState(() => isLoading = true);
               loadCitizenData();
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+
+              if (!context.mounted) return;
+
+              Navigator.pushNamedAndRemoveUntil(
+                context,
+                '/login',
+                (route) => false,
+              );
             },
           ),
         ],

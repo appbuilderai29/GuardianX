@@ -144,11 +144,16 @@ class BackTapService : Service(), SensorEventListener {
 private fun showGestureNotification() {
     val launchIntent = packageManager
         .getLaunchIntentForPackage(packageName)
-        launchIntent?.putExtra("guardianx_gesture_sos", true)
+       
         ?.apply {
+            putExtra("guardianx_gesture_sos", true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP
+                android.util.Log.d(
+        "GuardianX",
+        "Gesture SOS notification launch intent prepared"
+    )
         }
 
     val pendingIntent = launchIntent?.let {
