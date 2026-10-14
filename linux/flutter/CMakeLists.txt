@@ -5,17 +5,25 @@ set(EPHEMERAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ephemeral")
 
 # Configuration provided via flutter tool.
 if(NOT EXISTS "${EPHEMERAL_DIR}/generated_config.cmake")
-  find_program(FLUTTER_EXECUTABLE NAMES flutter
-    HINTS "$ENV{FLUTTER_ROOT}/bin")
+  find_program(FLUTTER_EXECUTABLE
+    NAMES flutter flutter.bat
+    HINTS "$ENV{FLUTTER_ROOT}/bin"
+    NO_CACHE
+  )
   if(FLUTTER_EXECUTABLE)
     execute_process(
       COMMAND "${FLUTTER_EXECUTABLE}" build linux
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
       RESULT_VARIABLE FLUTTER_BUILD_RESULT
+      OUTPUT_VARIABLE FLUTTER_BUILD_OUTPUT
+      ERROR_VARIABLE FLUTTER_BUILD_ERROR
     )
     if(NOT FLUTTER_BUILD_RESULT EQUAL 0)
       message(FATAL_ERROR
-        "'flutter build linux' failed while generating Flutter's Linux configuration (exit code ${FLUTTER_BUILD_RESULT})."
+        "'flutter build linux' failed while generating Flutter's Linux configuration.\n"
+        "Exit code: ${FLUTTER_BUILD_RESULT}\n"
+        "Output: ${FLUTTER_BUILD_OUTPUT}\n"
+        "Error: ${FLUTTER_BUILD_ERROR}"
       )
     endif()
   endif()

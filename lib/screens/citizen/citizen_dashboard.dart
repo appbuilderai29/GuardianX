@@ -1,11 +1,17 @@
+
 import 'dart:async';
-// ignore: unnecessary_import
-import 'package:flutter/services.dart';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:android_intent_plus/android_intent.dart';
+
 import 'package:guardianx/screens/citizen/gesture_sos_screen.dart';
+import 'package:guardianx/services/voice_preferences_service.dart';
+import 'package:guardianx/services/accident_detection_service.dart';
 
 class CitizenDashboard extends StatefulWidget {
   const CitizenDashboard({super.key});
@@ -15,9 +21,16 @@ class CitizenDashboard extends StatefulWidget {
 }
 
 class _CitizenDashboardState extends State<CitizenDashboard> {
+  static const MethodChannel _protectionChannel =
+      MethodChannel('com.example.guardianx/back_tap');
+
   bool isLoading = true;
   bool _handlingSOS = false;
+  bool _protectionEnabled = false;
+  bool _protectionLoading = false;
+  bool _accidentDetectionEnabled = false;
 
+  String _selectedSosType = 'threat';
   int _tapCount = 0;
   DateTime? _lastTap;
 
@@ -32,31 +45,32 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
   @override
   void initState() {
     super.initState();
-
-    // Check the gesture alert as early as possible.
     _checkPendingGestureSOS();
-
-    // Keep existing dashboard initialization.
     loadCitizenData();
     _syncProtectionState();
   }
 
-  // ignore: unused_element
+  @override
+  void dispose() {
+    AccidentDetectionService.stop();
+    super.dispose();
+  }
+
   Future<void> _syncProtectionState() async {
     try {
-      final bool running =
-          await _protectionChannel.invokeMethod<bool>('isProtectionRunning') ??
-          false;
+      final running =
+          await _protectionChannel.invokeMethod<bool>(
+                'isProtectionRunning',
+              ) ??
+              false;
 
-      if (!mounted) return;
-
-      setState(() {
-        _protectionEnabled = running;
-      });
-    } on PlatformException {
-      // Keep the current UI state if Android cannot be queried.
+      if (mounted) {
+        setState(() => _protectionEnabled = running);
+      }
+    } on PlatformException catch (e) {
+      debugPrint('Protection state error: $e');
     } on MissingPluginException {
-      // The native channel is unavailable.
+      debugPrint('Protection channel unavailable');
     }
   }
 
@@ -69,29 +83,35 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
         return;
       }
 
-      final document = await FirebaseFirestore.instance
+      final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .get();
 
       if (!mounted) return;
 
-      final data = document.data() ?? {};
+      final data = doc.data() ?? {};
 
       setState(() {
         fullName =
-            data['fullName']?.toString() ?? user.displayName ?? 'Citizen';
+            data['fullName']?.toString() ??
+            user.displayName ??
+            'Citizen';
         email = data['email']?.toString() ?? user.email ?? '';
         phone = data['phone']?.toString() ?? '';
         address = data['address']?.toString() ?? '';
         bloodGroup = data['bloodGroup']?.toString() ?? '';
-        emergencyContact1 = data['emergencyContact1']?.toString() ?? '';
-        emergencyContact2 = data['emergencyContact2']?.toString() ?? '';
+        emergencyContact1 =
+            data['emergencyContact1']?.toString() ?? '';
+        emergencyContact2 =
+            data['emergencyContact2']?.toString() ?? '';
         isLoading = false;
       });
-    } catch (e) {
-      if (!mounted) return;
+    } catch (e, stackTrace) {
+      debugPrint('❌ Load citizen data failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
 
+      if (!mounted) return;
       setState(() => isLoading = false);
       _showMessage('Unable to load your information: $e');
     }
@@ -100,19 +120,20 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
   void _showMessage(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
-  // Detect three quick taps while the dashboard is visible.
+  // Three quick screen taps trigger Threat SOS.
   void _handleScreenTap() {
     if (_handlingSOS) return;
 
     final now = DateTime.now();
 
     if (_lastTap == null ||
-        now.difference(_lastTap!) > const Duration(milliseconds: 1200)) {
+        now.difference(_lastTap!) >
+            const Duration(milliseconds: 1200)) {
       _tapCount = 1;
     } else {
       _tapCount++;
@@ -123,83 +144,77 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
     if (_tapCount >= 3) {
       _tapCount = 0;
       _lastTap = null;
-      _confirmSOS();
+      _confirmSOS(forcedType: 'threat');
     }
   }
 
-  static const MethodChannel _protectionChannel = MethodChannel(
-    'com.example.guardianx/back_tap',
-  );
-
-  // ignore: unused_element
-
-  Future<void> _checkPendingGestureSOS() async {
-    try {
-      final bool pending =
-          await _protectionChannel.invokeMethod<bool>('getPendingGestureSOS') ??
-          false;
-
-      debugPrint('GESTURE SOS PENDING: $pending');
-
-      if (!mounted || !pending) return;
-
-      // Open the confirmation screen immediately.
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const GestureSosScreen()));
-
-      // Clear the native pending flag after returning.
-      await _protectionChannel.invokeMethod('clearPendingGestureSOS');
-    } on PlatformException catch (e) {
-      debugPrint('Gesture SOS error: ${e.message}');
-    } on MissingPluginException {
-      debugPrint('Gesture SOS channel unavailable');
-    }
-  }
-
-  bool _protectionEnabled = false;
-  bool _protectionLoading = false;
-
-  // ignore: unused_element
-  Future<void> _toggleProtection() async {
-    if (_protectionLoading) return;
-
-    setState(() => _protectionLoading = true);
-
-    try {
-      if (_protectionEnabled) {
-        await _protectionChannel.invokeMethod('stopProtection');
-        setState(() => _protectionEnabled = false);
-      } else {
-        await _protectionChannel.invokeMethod('startProtection');
-        setState(() => _protectionEnabled = true);
-      }
-    } on PlatformException catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Protection error: ${e.message}')));
-    } on MissingPluginException {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Protection service connection not found.'),
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _protectionLoading = false);
-      }
-    }
-  }
-
-  Future<void> _confirmSOS() async {
+  // The normal SOS button lets the user choose a type.
+  // Automatic motion alerts pass forcedType: 'accident'.
+  Future<void> _confirmSOS({String? forcedType}) async {
     if (_handlingSOS || !mounted) return;
 
+    String selectedType = forcedType ?? 'threat';
+
+    if (forcedType == null) {
+      final selected = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Choose Emergency Type'),
+                content: RadioGroup<String>(
+                  groupValue: selectedType,
+                  onChanged: (value) {
+                    setDialogState(
+                      () => selectedType = value ?? 'threat',
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      RadioListTile<String>(
+                        title: Text('Threat / Personal Danger'),
+                        subtitle: Text('Contact priority person'),
+                        value: 'threat',
+                      ),
+                      RadioListTile<String>(
+                        title: Text('Accident'),
+                        subtitle: Text(
+                          'Flag police and ambulance requirements',
+                        ),
+                        value: 'accident',
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () =>
+                        Navigator.pop(dialogContext),
+                    child: const Text('CANCEL'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(
+                      dialogContext,
+                      selectedType,
+                    ),
+                    child: const Text('CONTINUE'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (selected == null || !mounted) return;
+      selectedType = selected;
+    }
+
+    _selectedSosType = selectedType;
     _handlingSOS = true;
-    bool cancelled = false;
+
     int secondsLeft = 5;
     Timer? countdownTimer;
 
@@ -210,39 +225,38 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
         builder: (dialogContext) {
           return StatefulBuilder(
             builder: (context, setDialogState) {
-              countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (
-                timer,
-              ) {
-                if (secondsLeft <= 1) {
-                  timer.cancel();
-                  countdownTimer = null;
+              countdownTimer ??= Timer.periodic(
+                const Duration(seconds: 1),
+                (timer) {
+                  if (secondsLeft <= 1) {
+                    timer.cancel();
+                    countdownTimer = null;
 
-                  if (Navigator.of(dialogContext).canPop()) {
-                    Navigator.of(dialogContext).pop(true);
+                    if (Navigator.of(dialogContext).canPop()) {
+                      Navigator.of(dialogContext).pop(true);
+                    }
+                  } else {
+                    secondsLeft--;
+                    setDialogState(() {});
                   }
-                } else {
-                  secondsLeft--;
-
-                  setDialogState(() {});
-                }
-              });
+                },
+              );
 
               return AlertDialog(
-                title: const Text('Emergency SOS'),
+                title: const Text('Confirm Emergency SOS'),
                 content: Text(
-                  'SOS will be sent in $secondsLeft seconds '
-                  'unless you cancel.\n\n'
-                  'Cancel if this was an accidental tap.',
+                  'Emergency type: '
+                  '${_selectedSosType.toUpperCase()}\n\n'
+                  'SOS will be sent in $secondsLeft seconds.',
                 ),
                 actions: [
                   TextButton(
                     onPressed: () {
-                      cancelled = true;
                       countdownTimer?.cancel();
                       countdownTimer = null;
                       Navigator.of(dialogContext).pop(false);
                     },
-                    child: const Text('CANCEL'),
+                    child: const Text('CANCEL SOS'),
                   ),
                 ],
               );
@@ -254,10 +268,12 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
       countdownTimer?.cancel();
       countdownTimer = null;
 
-      if (confirmed == true && !cancelled && mounted) {
+      if (confirmed == true && mounted) {
         await _sendSOS();
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('❌ SOS confirmation error: $e');
+      debugPrintStack(stackTrace: stackTrace);
       _showMessage('Could not trigger SOS: $e');
     } finally {
       countdownTimer?.cancel();
@@ -265,58 +281,238 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
     }
   }
 
-  // Save an emergency record to Firestore.
   Future<void> _sendSOS() async {
+    debugPrint('🚨 SOS: _sendSOS() started');
+
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
+      debugPrint('❌ SOS FAILED: No logged-in user');
       _showMessage('Please log in before sending SOS.');
       return;
     }
 
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      _showMessage('Please enable location on your phone.');
+    debugPrint('✅ SOS user ID: ${user.uid}');
+
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        debugPrint('❌ SOS FAILED: Location service is disabled');
+        _showMessage('Please enable location on your phone.');
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        debugPrint('❌ SOS FAILED: Location permission denied');
+        _showMessage('Location permission is required.');
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+
+      debugPrint('📍 SOS: Location obtained');
+
+      final profile = userDoc.data() ?? {};
+      final contact1 =
+          profile['emergencyContact1']?.toString().trim() ?? '';
+      final contact2 =
+          profile['emergencyContact2']?.toString().trim() ?? '';
+      final priorityContact =
+          contact1.isNotEmpty ? contact1 : contact2;
+      final isThreat = _selectedSosType == 'threat';
+
+      debugPrint('🔥 SOS: Attempting Firestore write...');
+
+      // Write the emergency record BEFORE attempting a phone call.
+      final emergencyRef = await FirebaseFirestore.instance
+          .collection('emergencies')
+          .add({
+        'userId': user.uid,
+        'userName':
+            profile['fullName'] ?? user.displayName ?? 'Citizen',
+        'phone': profile['phone'] ?? '',
+        'email': profile['email'] ?? user.email ?? '',
+        'address': profile['address'] ?? '',
+        'type': _selectedSosType,
+        'status': 'active',
+        'policeRequired': true,
+        'ambulanceRequired': !isThreat,
+        'emergencyContact1': contact1,
+        'emergencyContact2': contact2,
+        'priorityContact': priorityContact,
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'createdAt': FieldValue.serverTimestamp(),
+        'createdAtMillis':
+            DateTime.now().millisecondsSinceEpoch,
+      });
+
+      debugPrint('✅ FIRESTORE WRITE SUCCESS');
+      debugPrint('📄 Emergency document ID: ${emergencyRef.id}');
+
+      // Show database success immediately after the write succeeds.
+      _showMessage(
+        'Emergency record saved. ID: ${emergencyRef.id}',
+      );
+
+      // Voice prompt plays on this phone.
+      if (isThreat) {
+        try {
+          await VoicePreferencesService.speakEmergencyPrompt(
+            'I am in danger. Please help me.',
+          );
+        } catch (e) {
+          debugPrint('Emergency voice alert failed: $e');
+        }
+      }
+
+      // A phone call is a separate operation from saving the record.
+      if (priorityContact.isEmpty) {
+        _showMessage(
+          'Emergency saved, but no emergency contact is registered.',
+        );
+        return;
+      }
+
+      await _callPriorityContact(priorityContact);
+    } catch (e, stackTrace) {
+      debugPrint('❌ FIRESTORE/SOS ERROR: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      _showMessage('SOS failed: $e');
+    }
+  }
+
+  Future<void> _callPriorityContact(String number) async {
+    final cleanedNumber =
+        number.replaceAll(RegExp(r'[\s()-]'), '');
+
+    if (cleanedNumber.isEmpty) return;
+
+    try {
+      final status = await Permission.phone.request();
+
+      if (!status.isGranted) {
+        _showMessage(
+          'Emergency saved, but call permission was not granted.',
+        );
+        return;
+      }
+
+      final intent = AndroidIntent(
+        action: 'android.intent.action.CALL',
+        data: 'tel:$cleanedNumber',
+      );
+
+      await intent.launch();
+    } catch (e, stackTrace) {
+      debugPrint('❌ Priority contact call failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      _showMessage('Emergency saved, but the call could not start.');
+    }
+  }
+
+  Future<void> _checkPendingGestureSOS() async {
+    try {
+      final pending =
+          await _protectionChannel.invokeMethod<bool>(
+                'getPendingGestureSOS',
+              ) ??
+              false;
+
+      debugPrint('GESTURE SOS PENDING: $pending');
+
+      if (!mounted || !pending) return;
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const GestureSosScreen(),
+        ),
+      );
+
+      await _protectionChannel.invokeMethod(
+        'clearPendingGestureSOS',
+      );
+    } on PlatformException catch (e) {
+      debugPrint('Gesture SOS error: ${e.message}');
+    } on MissingPluginException {
+      debugPrint('Gesture SOS channel unavailable');
+    }
+  }
+
+  Future<void> _toggleProtection() async {
+    if (_protectionLoading) return;
+
+    setState(() => _protectionLoading = true);
+
+    try {
+      if (_protectionEnabled) {
+        await _protectionChannel.invokeMethod('stopProtection');
+        if (mounted) setState(() => _protectionEnabled = false);
+      } else {
+        await _protectionChannel.invokeMethod('startProtection');
+        if (mounted) setState(() => _protectionEnabled = true);
+      }
+    } on PlatformException catch (e) {
+      _showMessage('Protection error: ${e.message}');
+    } on MissingPluginException {
+      _showMessage('Protection service connection not found.');
+    } finally {
+      if (mounted) {
+        setState(() => _protectionLoading = false);
+      }
+    }
+  }
+
+  Future<void> _toggleAccidentDetection() async {
+    if (_accidentDetectionEnabled) {
+      await AccidentDetectionService.stop();
+
+      if (!mounted) return;
+      setState(() => _accidentDetectionEnabled = false);
+      _showMessage('Accident detection stopped.');
       return;
     }
 
-    var permission = await Geolocator.checkPermission();
+    try {
+      AccidentDetectionService.start(
+        onPossibleAccident: () {
+          if (!mounted || _handlingSOS) return;
 
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+          _showMessage(
+            'Possible impact detected. Confirm the emergency.',
+          );
+
+          _confirmSOS(forcedType: 'accident');
+        },
+      );
+
+      if (!mounted) {
+        await AccidentDetectionService.stop();
+        return;
+      }
+
+      setState(() => _accidentDetectionEnabled = true);
+      _showMessage('Motion-based accident detection enabled.');
+    } catch (e, stackTrace) {
+      debugPrint('Accident detection start failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      _showMessage('Unable to start accident detection: $e');
     }
-
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      _showMessage('Location permission is required.');
-      return;
-    }
-
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-    );
-
-    final userDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-
-    final profile = userDoc.data() ?? {};
-
-    await FirebaseFirestore.instance.collection('emergencies').add({
-      'userId': user.uid,
-      'userName': profile['fullName'] ?? user.displayName ?? 'Citizen',
-      'phone': profile['phone'] ?? '',
-      'email': user.email ?? '',
-      'address': profile['address'] ?? '',
-      'type': 'SOS',
-      'status': 'active',
-      'latitude': position.latitude,
-      'longitude': position.longitude,
-      'createdAt': FieldValue.serverTimestamp(),
-      'createdAtMillis': DateTime.now().millisecondsSinceEpoch,
-    });
-
-    _showMessage('SOS emergency record created.');
   }
 
   Widget _sectionTitle(String title) {
@@ -342,7 +538,10 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
           backgroundColor: Colors.red,
           child: Icon(icon, color: Colors.white),
         ),
-        title: Text(title, style: const TextStyle(color: Colors.white70)),
+        title: Text(
+          title,
+          style: const TextStyle(color: Colors.white70),
+        ),
         subtitle: Text(
           value.isEmpty ? 'Not provided' : value,
           style: const TextStyle(
@@ -368,7 +567,10 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
           backgroundColor: Colors.red,
           child: Icon(Icons.emergency, color: Colors.white),
         ),
-        title: Text(title, style: const TextStyle(color: Colors.white70)),
+        title: Text(
+          title,
+          style: const TextStyle(color: Colors.white70),
+        ),
         subtitle: Text(
           number.isEmpty ? 'Not provided' : number,
           style: const TextStyle(
@@ -387,7 +589,9 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  Widget _hospitalCard(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+  Widget _hospitalCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
     final data = doc.data();
 
     return Card(
@@ -443,11 +647,11 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
       appBar: AppBar(
         backgroundColor: Colors.red,
         foregroundColor: Colors.white,
+        centerTitle: true,
         title: const Text(
           'Citizen Dashboard',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        centerTitle: true,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -473,14 +677,13 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
           ),
         ],
       ),
-
-      // The listener is inside Scaffold, so the dialog has
-      // access to the app's Navigator.
       body: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: (_) => _handleScreenTap(),
         child: isLoading
-            ? const Center(child: CircularProgressIndicator(color: Colors.red))
+            ? const Center(
+                child: CircularProgressIndicator(color: Colors.red),
+              )
             : RefreshIndicator(
                 color: Colors.red,
                 onRefresh: loadCitizenData,
@@ -513,11 +716,14 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
                             const SizedBox(width: 15),
                             Expanded(
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
                                 children: [
                                   const Text(
                                     'Welcome back,',
-                                    style: TextStyle(color: Colors.white70),
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                    ),
                                   ),
                                   Text(
                                     fullName,
@@ -531,7 +737,9 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
                                   ),
                                   const Text(
                                     'GuardianX Citizen',
-                                    style: TextStyle(color: Colors.white70),
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -539,14 +747,12 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
                           ],
                         ),
                       ),
-
                       const SizedBox(height: 25),
-
                       SizedBox(
                         width: double.infinity,
                         height: 85,
                         child: ElevatedButton(
-                          onPressed: _confirmSOS,
+                          onPressed: () => _confirmSOS(),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red,
                             foregroundColor: Colors.white,
@@ -570,43 +776,77 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
                           ),
                         ),
                       ),
-                      ElevatedButton.icon(
-                        onPressed: _protectionLoading
-                            ? null
-                            : _toggleProtection,
-                        icon: Icon(
-                          _protectionEnabled
-                              ? Icons.shield
-                              : Icons.shield_outlined,
-                        ),
-                        label: Text(
-                          _protectionLoading
-                              ? 'Please wait...'
-                              : _protectionEnabled
-                              ? 'Stop Protection'
-                              : 'Start Protection',
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _protectionLoading
+                              ? null
+                              : _toggleProtection,
+                          icon: Icon(
+                            _protectionEnabled
+                                ? Icons.shield
+                                : Icons.shield_outlined,
+                          ),
+                          label: Text(
+                            _protectionLoading
+                                ? 'Please wait...'
+                                : _protectionEnabled
+                                    ? 'Stop Protection'
+                                    : 'Start Protection',
+                          ),
                         ),
                       ),
-
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _toggleAccidentDetection,
+                          icon: Icon(
+                            _accidentDetectionEnabled
+                                ? Icons.car_crash
+                                : Icons.car_crash_outlined,
+                          ),
+                          label: Text(
+                            _accidentDetectionEnabled
+                                ? 'Stop Accident Detection'
+                                : 'Start Accident Detection',
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                _accidentDetectionEnabled
+                                    ? Colors.green
+                                    : const Color(0xFF7A0000),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 16,
+                            ),
+                          ),
+                        ),
+                      ),
                       _sectionTitle('My Information'),
                       _infoCard(Icons.person, 'Full Name', fullName),
                       _infoCard(Icons.email, 'Email', email),
                       _infoCard(Icons.phone, 'Phone Number', phone),
                       _infoCard(Icons.location_on, 'Address', address),
                       _infoCard(Icons.bloodtype, 'Blood Group', bloodGroup),
-
                       _sectionTitle('Emergency Contacts'),
-                      _contactCard('Emergency Contact 1', emergencyContact1),
-                      _contactCard('Emergency Contact 2', emergencyContact2),
-
+                      _contactCard(
+                        'Emergency Contact 1',
+                        emergencyContact1,
+                      ),
+                      _contactCard(
+                        'Emergency Contact 2',
+                        emergencyContact2,
+                      ),
                       _sectionTitle('Registered Hospitals'),
                       const Text(
                         'Hospitals available through GuardianX',
                         style: TextStyle(color: Colors.white60),
                       ),
                       const SizedBox(height: 14),
-
-                      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      StreamBuilder<
+                          QuerySnapshot<Map<String, dynamic>>>(
                         stream: FirebaseFirestore.instance
                             .collection('users')
                             .where('role', isEqualTo: 'hospital')
@@ -614,7 +854,8 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
                         builder: (context, snapshot) {
                           if (snapshot.hasError) {
                             return Text(
-                              'Unable to load hospitals: ${snapshot.error}',
+                              'Unable to load hospitals: '
+                              '${snapshot.error}',
                               style: const TextStyle(color: Colors.red),
                             );
                           }
@@ -628,7 +869,8 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
                             );
                           }
 
-                          final hospitals = snapshot.data?.docs ?? [];
+                          final hospitals =
+                              snapshot.data?.docs ?? [];
 
                           if (hospitals.isEmpty) {
                             return const Text(
@@ -638,17 +880,20 @@ class _CitizenDashboardState extends State<CitizenDashboard> {
                           }
 
                           return Column(
-                            children: hospitals.map(_hospitalCard).toList(),
+                            children:
+                                hospitals.map(_hospitalCard).toList(),
                           );
                         },
                       ),
-
                       const SizedBox(height: 20),
                       const Center(
                         child: Text(
                           'Your information is securely stored in GuardianX',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white38, fontSize: 12),
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                     ],
