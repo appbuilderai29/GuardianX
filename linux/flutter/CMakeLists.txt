@@ -9,10 +9,15 @@ if(NOT EXISTS "${EPHEMERAL_DIR}/generated_config.cmake")
     HINTS "$ENV{FLUTTER_ROOT}/bin")
   if(FLUTTER_EXECUTABLE)
     execute_process(
-      COMMAND "${FLUTTER_EXECUTABLE}" pub get
+      COMMAND "${FLUTTER_EXECUTABLE}" build linux
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
-      RESULT_VARIABLE FLUTTER_PUB_GET_RESULT
+      RESULT_VARIABLE FLUTTER_BUILD_RESULT
     )
+    if(NOT FLUTTER_BUILD_RESULT EQUAL 0)
+      message(FATAL_ERROR
+        "'flutter build linux' failed while generating Flutter's Linux configuration (exit code ${FLUTTER_BUILD_RESULT})."
+      )
+    endif()
   endif()
   if(NOT EXISTS "${EPHEMERAL_DIR}/generated_config.cmake")
     message(FATAL_ERROR
