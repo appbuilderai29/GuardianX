@@ -80,7 +80,7 @@ target_include_directories(flutter INTERFACE
 target_link_libraries(flutter INTERFACE "${FLUTTER_LIBRARY}")
 target_link_libraries(flutter INTERFACE
   PkgConfig::GTK
-  PkgCon)fig::GLIB
+  PkgConfig::GLIB
   PkgConfig::GIO
 )
 add_dependencies(flutter flutter_assemble)
@@ -97,6 +97,7 @@ add_custom_command(
     "${FLUTTER_ROOT}/packages/flutter_tools/bin/tool_backend.sh"
       ${FLUTTER_TARGET_PLATFORM} ${CMAKE_BUILD_TYPE}
   VERBATIM
+)
 add_custom_target(flutter_assemble DEPENDS
   "${FLUTTER_LIBRARY}"
   ${FLUTTER_LIBRARY_HEADERS}

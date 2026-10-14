@@ -52,7 +52,9 @@ class AIVoiceService {
     String? recognizedText;
 
     await _speech.listen(
+      // ignore: deprecated_member_use
       localeId: localeId,
+      // ignore: deprecated_member_use
       listenFor: listenFor,
       onResult: (result) {
         if (result.finalResult) {
