@@ -78,6 +78,10 @@ class SosServices {
 
     debugPrint('SOS AUTH UID: ${user.uid}');
     debugPrint('SOS PROFILE ROLE: ${profile['role']}');
+    debugPrint('SOS PROFILE NAME: ${profile['fullName']}');
+debugPrint('SOS PROFILE PHONE: ${profile['phone']}');
+debugPrint('SOS PROFILE EMAIL: ${profile['email']}');
+debugPrint('SOS AUTH EMAIL: ${user.email}');
     debugPrint('SOS DOCUMENT USER ID: ${user.uid}');
     debugPrint('SOS LATITUDE: ${position.latitude}');
     debugPrint('SOS LONGITUDE: ${position.longitude}');

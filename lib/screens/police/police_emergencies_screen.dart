@@ -2,8 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import 'emergency_location_screen.dart';
 
 class PoliceEmergenciesScreen extends StatelessWidget {
@@ -167,34 +165,19 @@ class PoliceEmergenciesScreen extends StatelessWidget {
       return;
     }
 
-    final uri = Uri.https(
-      'www.google.com',
-      '/maps/search/',
-      {
-        'api': '1',
-        'query': address,
-      },
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Emergency Address'),
+        content: SelectableText(address),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
-
-    try {
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-
-      if (!opened && context.mounted) {
-        showMessage(context, 'Unable to open Google Maps.');
-      }
-    } catch (error) {
-      debugPrint('Map opening error: $error');
-
-      if (context.mounted) {
-        showMessage(
-          context,
-          'Unable to open the emergency location.',
-        );
-      }
-    }
   }
 
   Future<void> updateStatus(

@@ -4,6 +4,22 @@ cmake_minimum_required(VERSION 3.10)
 set(EPHEMERAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ephemeral")
 
 # Configuration provided via flutter tool.
+if(NOT EXISTS "${EPHEMERAL_DIR}/generated_config.cmake")
+  find_program(FLUTTER_EXECUTABLE NAMES flutter
+    HINTS "$ENV{FLUTTER_ROOT}/bin")
+  if(FLUTTER_EXECUTABLE)
+    execute_process(
+      COMMAND "${FLUTTER_EXECUTABLE}" pub get
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+      RESULT_VARIABLE FLUTTER_PUB_GET_RESULT
+    )
+  endif()
+  if(NOT EXISTS "${EPHEMERAL_DIR}/generated_config.cmake")
+    message(FATAL_ERROR
+      "Flutter generated_config.cmake was not found. Run 'flutter build linux' from the project root to generate it."
+    )
+  endif()
+endif()
 include(${EPHEMERAL_DIR}/generated_config.cmake)
 
 # TODO: Move the rest of this into files in ephemeral. See
@@ -64,7 +80,7 @@ target_include_directories(flutter INTERFACE
 target_link_libraries(flutter INTERFACE "${FLUTTER_LIBRARY}")
 target_link_libraries(flutter INTERFACE
   PkgConfig::GTK
-  PkgConfig::GLIB
+  PkgCon)fig::GLIB
   PkgConfig::GIO
 )
 add_dependencies(flutter flutter_assemble)
@@ -81,7 +97,6 @@ add_custom_command(
     "${FLUTTER_ROOT}/packages/flutter_tools/bin/tool_backend.sh"
       ${FLUTTER_TARGET_PLATFORM} ${CMAKE_BUILD_TYPE}
   VERBATIM
-)
 add_custom_target(flutter_assemble DEPENDS
   "${FLUTTER_LIBRARY}"
   ${FLUTTER_LIBRARY_HEADERS}

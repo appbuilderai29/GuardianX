@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 
 class EmergencyContactScreen extends StatefulWidget {
@@ -61,15 +60,9 @@ class _EmergencyContactScreenState
 
   // Call Contact
   Future<void> makeCall(String number) async {
-
-    final Uri callUri =
-    Uri.parse("tel:$number");
-
-
-    if(await canLaunchUrl(callUri)){
-      await launchUrl(callUri);
-    }
-
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Open your phone app to call $number')),
+    );
   }
 
 

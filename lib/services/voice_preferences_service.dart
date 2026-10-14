@@ -1,9 +1,11 @@
+// ignore_for_file: depend_on_referenced_packages, uri_does_not_exist
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter_tts/flutter_tts.dart' as tts;
 
 class VoicePreferencesService {
-  static final FlutterTts _tts = FlutterTts();
+  static final tts.FlutterTts _tts = tts.FlutterTts();
 
   static const Map<String, String> supportedLanguages = {
     'English': 'en-IN',

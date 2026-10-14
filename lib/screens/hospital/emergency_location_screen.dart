@@ -1,7 +1,7 @@
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class EmergencyLocationScreen extends StatefulWidget {
   final double? latitude;
@@ -43,7 +43,7 @@ class _EmergencyLocationScreenState
         widget.longitude!,
       );
 
-  Future<void> openGoogleMapsDirections() async {
+  Future<void> copyGoogleMapsDirections() async {
     if (!hasValidLocation) return;
 
     final lat = widget.latitude!;
@@ -54,27 +54,11 @@ class _EmergencyLocationScreenState
       '&destination=$lat,$lng',
     );
 
-    try {
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-
-      if (!opened && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Unable to open Google Maps.'),
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint('Error opening Google Maps: $e');
-
-      if (!mounted) return;
-
+    await Clipboard.setData(ClipboardData(text: uri.toString()));
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Unable to open Google Maps.'),
+          content: Text('Google Maps directions link copied.'),
         ),
       );
     }
@@ -161,9 +145,9 @@ class _EmergencyLocationScreenState
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          onPressed: openGoogleMapsDirections,
-                          icon: const Icon(Icons.directions),
-                          label: const Text('Get Directions'),
+                          onPressed: copyGoogleMapsDirections,
+                          icon: const Icon(Icons.copy),
+                          label: const Text('Copy Directions Link'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red,
                             foregroundColor: Colors.white,

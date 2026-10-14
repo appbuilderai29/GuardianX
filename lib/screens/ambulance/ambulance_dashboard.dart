@@ -1,19 +1,16 @@
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class AmbulanceDashboard extends StatefulWidget {
   const AmbulanceDashboard({super.key});
 
   @override
-  State<AmbulanceDashboard> createState() =>
-      _AmbulanceDashboardState();
+  State<AmbulanceDashboard> createState() => _AmbulanceDashboardState();
 }
 
-class _AmbulanceDashboardState
-    extends State<AmbulanceDashboard> {
+class _AmbulanceDashboardState extends State<AmbulanceDashboard> {
   final FirebaseFirestore db = FirebaseFirestore.instance;
 
   bool isAvailable = true;
@@ -54,7 +51,6 @@ class _AmbulanceDashboardState
     );
   }
 
-  // Update the logged-in ambulance driver's availability.
   Future<void> toggleAvailability() async {
     final user = currentUser;
     if (user == null || loadingAvailability) return;
@@ -64,9 +60,7 @@ class _AmbulanceDashboardState
     setState(() => loadingAvailability = true);
 
     try {
-      await db.collection('users').doc(user.uid).update({
-        'status': newStatus,
-      });
+      await db.collection('users').doc(user.uid).update({'status': newStatus});
 
       if (!mounted) return;
 
@@ -79,12 +73,10 @@ class _AmbulanceDashboardState
     } catch (e) {
       if (!mounted) return;
       setState(() => loadingAvailability = false);
-      showMessage('Unable to update status. Check Firestore rules.', error: true);
+      showMessage('Unable to update availability.', error: true);
     }
   }
 
-  // Emergency requests are created by SosScreen with status "active".
-  // Also show requests accepted by this driver.
   Stream<QuerySnapshot<Map<String, dynamic>>> emergencyStream() {
     return db.collection('emergencies').snapshots();
   }
@@ -97,8 +89,7 @@ class _AmbulanceDashboardState
   }
 
   bool isVisibleEmergency(Map<String, dynamic> data) {
-    final status =
-        (data['status'] ?? '').toString().toLowerCase();
+    final status = (data['status'] ?? '').toString().toLowerCase();
 
     return status == 'active' ||
         (status == 'accepted' && belongsToThisDriver(data)) ||
@@ -106,13 +97,24 @@ class _AmbulanceDashboardState
         (status == 'arrived' && belongsToThisDriver(data));
   }
 
-  // Atomically claim a request so two drivers cannot both accept
-  // the same still-active emergency.
+  int _createdMillis(Map<String, dynamic> data) {
+    final millis = data['createdAtMillis'];
+    if (millis is num) return millis.toInt();
+
+    final timestamp = data['createdAt'];
+    if (timestamp is Timestamp) {
+      return timestamp.millisecondsSinceEpoch;
+    }
+
+    return 0;
+  }
+
   Future<void> acceptEmergency(
     String emergencyId,
     Map<String, dynamic> data,
   ) async {
     final user = currentUser;
+
     if (user == null) {
       showMessage('Please sign in again.', error: true);
       return;
@@ -133,8 +135,7 @@ class _AmbulanceDashboardState
         }
 
         final latest = snapshot.data() ?? {};
-        final status =
-            (latest['status'] ?? '').toString().toLowerCase();
+        final status = (latest['status'] ?? '').toString().toLowerCase();
 
         if (status != 'active') {
           throw Exception('This emergency has already been accepted.');
@@ -143,22 +144,20 @@ class _AmbulanceDashboardState
         transaction.update(ref, {
           'status': 'accepted',
           'assignedAmbulanceId': user.uid,
-          'assignedDriverName':
-              user.displayName ?? 'Ambulance Driver',
+          'assignedDriverName': user.displayName ?? 'Ambulance Driver',
           'acceptedAt': FieldValue.serverTimestamp(),
         });
       });
 
-      await db.collection('users').doc(user.uid).update({
-        'status': 'Busy',
-      });
+      await db.collection('users').doc(user.uid).update({'status': 'Busy'});
 
       if (!mounted) return;
       setState(() => isAvailable = false);
       showMessage('Emergency accepted successfully.');
     } catch (e) {
       showMessage(
-        'Could not accept emergency: ${e.toString().replaceFirst('Exception: ', '')}',
+        'Could not accept emergency: '
+        '${e.toString().replaceFirst('Exception: ', '')}',
         error: true,
       );
     }
@@ -224,26 +223,42 @@ class _AmbulanceDashboardState
       '&travelmode=driving',
     );
 
-    try {
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+    if (!mounted) return;
 
-      if (!opened) {
-        showMessage('Could not open navigation.', error: true);
-      }
-    } catch (e) {
-      showMessage('Could not open navigation: $e', error: true);
-    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Navigate to Patient'),
+        content: SelectableText(uri.toString()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: uri.toString()));
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              showMessage('Directions link copied to clipboard.');
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('Copy link'),
+          ),
+        ],
+      ),
+    );
   }
 
-  void showPatientDetails(
-    String emergencyId,
-    Map<String, dynamic> data,
-  ) {
+  void showPatientDetails(String emergencyId, Map<String, dynamic> data) {
     final status = (data['status'] ?? 'active').toString().toLowerCase();
     final mine = belongsToThisDriver(data);
+
+    // Debug the exact emergency document shown in the modal.
+    debugPrint('PATIENT DETAILS - Emergency ID: $emergencyId');
+    debugPrint('PATIENT DETAILS - User ID: ${data['userId']}');
+    debugPrint('PATIENT DETAILS - Name: ${data['userName']}');
+    debugPrint('PATIENT DETAILS - Phone: ${data['phone']}');
+    debugPrint('PATIENT DETAILS - Email: ${data['email']}');
 
     showModalBottomSheet<void>(
       context: context,
@@ -277,8 +292,7 @@ class _AmbulanceDashboardState
                   detailRow('Longitude', data['longitude']),
                   const SizedBox(height: 20),
 
-                  if (data['latitude'] is num &&
-                      data['longitude'] is num)
+                  if (data['latitude'] is num && data['longitude'] is num)
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
@@ -313,40 +327,22 @@ class _AmbulanceDashboardState
                     ),
 
                   if (mine && status == 'accepted')
-                    statusButton(
-                      'Start Responding',
-                      () {
-                        Navigator.pop(sheetContext);
-                        updateEmergencyStatus(
-                          emergencyId,
-                          'responding',
-                        );
-                      },
-                    ),
+                    statusButton('Start Responding', () {
+                      Navigator.pop(sheetContext);
+                      updateEmergencyStatus(emergencyId, 'responding');
+                    }),
 
                   if (mine && status == 'responding')
-                    statusButton(
-                      'Mark Arrived',
-                      () {
-                        Navigator.pop(sheetContext);
-                        updateEmergencyStatus(
-                          emergencyId,
-                          'arrived',
-                        );
-                      },
-                    ),
+                    statusButton('Mark Arrived', () {
+                      Navigator.pop(sheetContext);
+                      updateEmergencyStatus(emergencyId, 'arrived');
+                    }),
 
                   if (mine && status == 'arrived')
-                    statusButton(
-                      'Complete Emergency',
-                      () {
-                        Navigator.pop(sheetContext);
-                        updateEmergencyStatus(
-                          emergencyId,
-                          'resolved',
-                        );
-                      },
-                    ),
+                    statusButton('Complete Emergency', () {
+                      Navigator.pop(sheetContext);
+                      updateEmergencyStatus(emergencyId, 'resolved');
+                    }),
                 ],
               ),
             ),
@@ -382,16 +378,10 @@ class _AmbulanceDashboardState
         children: [
           SizedBox(
             width: 125,
-            child: Text(
-              label,
-              style: const TextStyle(color: Colors.white60),
-            ),
+            child: Text(label, style: const TextStyle(color: Colors.white60)),
           ),
           Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(color: Colors.white),
-            ),
+            child: Text(text, style: const TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -407,9 +397,7 @@ class _AmbulanceDashboardState
   }) {
     return Card(
       color: Colors.grey.shade900,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
         onTap: onTap,
@@ -433,10 +421,7 @@ class _AmbulanceDashboardState
                 Text(
                   subtitle,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white60,
-                    fontSize: 11,
-                  ),
+                  style: const TextStyle(color: Colors.white60, fontSize: 11),
                 ),
               ],
             ],
@@ -542,25 +527,46 @@ class _AmbulanceDashboardState
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: emergencyStream(),
         builder: (context, snapshot) {
-          final allDocs = snapshot.data?.docs ?? [];
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  'Could not load emergencies:\n${snapshot.error}',
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              ),
+            );
+          }
 
-          final requests = allDocs
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.red),
+            );
+          }
+
+          final requests = (snapshot.data?.docs ?? [])
               .where((doc) => isVisibleEmergency(doc.data()))
               .toList();
 
+          // Sort newest first, using createdAtMillis or Firestore Timestamp.
           requests.sort((a, b) {
-            final aTime = a.data()['createdAtMillis'];
-            final bTime = b.data()['createdAtMillis'];
-
-            if (aTime is num && bTime is num) {
-              return bTime.compareTo(aTime);
-            }
-            return 0;
+            return _createdMillis(b.data()).compareTo(_createdMillis(a.data()));
           });
 
           final newRequests = requests.where((doc) {
-            return (doc.data()['status'] ?? 'active') == 'active';
+            return (doc.data()['status'] ?? '').toString().toLowerCase() ==
+                'active';
           }).length;
+
+          QueryDocumentSnapshot<Map<String, dynamic>>? latestWithLocation;
+          for (final doc in requests) {
+            final data = doc.data();
+            if (data['latitude'] is num && data['longitude'] is num) {
+              latestWithLocation = doc;
+              break;
+            }
+          }
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -581,11 +587,11 @@ class _AmbulanceDashboardState
                         ),
                       ),
                       const SizedBox(width: 14),
-                      Expanded(
+                      const Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               'Ambulance Driver',
                               style: TextStyle(
                                 color: Colors.white,
@@ -593,14 +599,10 @@ class _AmbulanceDashboardState
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(height: 5),
+                            SizedBox(height: 5),
                             Text(
-                              isAvailable ? 'Available for requests' : 'Currently busy',
-                              style: TextStyle(
-                                color: isAvailable
-                                    ? Colors.greenAccent
-                                    : Colors.orangeAccent,
-                              ),
+                              'Manage emergency requests',
+                              style: TextStyle(color: Colors.white60),
                             ),
                           ],
                         ),
@@ -631,18 +633,11 @@ class _AmbulanceDashboardState
                     'Emergency Calls',
                     Colors.red,
                     () {
-                      if (snapshot.hasError) {
-                        showMessage(
-                          'Unable to load emergencies. Check Firestore rules.',
-                          error: true,
-                        );
-                      } else if (requests.isEmpty) {
-                        showMessage('No emergency requests available.');
-                      } else {
-                        showMessage(
-                          '$newRequests new request(s). See the list below.',
-                        );
-                      }
+                      showMessage(
+                        requests.isEmpty
+                            ? 'No emergency requests available.'
+                            : '$newRequests new request(s). See below.',
+                      );
                     },
                     subtitle: '$newRequests new',
                   ),
@@ -651,51 +646,39 @@ class _AmbulanceDashboardState
                     'Live Location',
                     Colors.blue,
                     () {
-                      final doc = requests.cast<QueryDocumentSnapshot<Map<String, dynamic>>?>().firstWhere(
-                        (d) => d != null &&
-                            d.data()['latitude'] is num &&
-                            d.data()['longitude'] is num,
-                        orElse: () => null,
-                      );
-
-                      if (doc == null) {
-                        showMessage('No patient location available.', error: true);
+                      if (latestWithLocation == null) {
+                        showMessage(
+                          'No patient location available.',
+                          error: true,
+                        );
                       } else {
-                        navigateToPatient(doc.data());
+                        navigateToPatient(latestWithLocation.data());
                       }
                     },
                   ),
-                  dashboardCard(
-                    Icons.navigation,
-                    'Navigate',
-                    Colors.green,
-                    () {
-                      final doc = requests.cast<QueryDocumentSnapshot<Map<String, dynamic>>?>().firstWhere(
-                        (d) => d != null &&
-                            d.data()['latitude'] is num &&
-                            d.data()['longitude'] is num,
-                        orElse: () => null,
+                  dashboardCard(Icons.navigation, 'Navigate', Colors.green, () {
+                    if (latestWithLocation == null) {
+                      showMessage(
+                        'No patient location available.',
+                        error: true,
                       );
-
-                      if (doc == null) {
-                        showMessage('No patient location available.', error: true);
-                      } else {
-                        navigateToPatient(doc.data());
-                      }
-                    },
-                  ),
+                    } else {
+                      navigateToPatient(latestWithLocation.data());
+                    }
+                  }),
                   dashboardCard(
                     Icons.person,
                     'Patient Details',
                     Colors.orange,
                     () {
                       if (requests.isEmpty) {
-                        showMessage('No patient details available.');
-                      } else {
-                        showPatientDetails(
-                          requests.first.id,
-                          requests.first.data(),
+                        showMessage(
+                          'No patient details available.',
+                          error: true,
                         );
+                      } else {
+                        final latest = requests.first;
+                        showPatientDetails(latest.id, latest.data());
                       }
                     },
                   ),
@@ -726,25 +709,7 @@ class _AmbulanceDashboardState
               ),
               const SizedBox(height: 12),
 
-              if (snapshot.connectionState == ConnectionState.waiting)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: CircularProgressIndicator(color: Colors.red),
-                  ),
-                )
-              else if (snapshot.hasError)
-                Card(
-                  color: Colors.grey.shade900,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      'Could not load emergency requests.\n${snapshot.error}',
-                      style: const TextStyle(color: Colors.redAccent),
-                    ),
-                  ),
-                )
-              else if (requests.isEmpty)
+              if (requests.isEmpty)
                 Card(
                   color: Colors.grey.shade900,
                   child: const Padding(
@@ -777,8 +742,7 @@ class _AmbulanceDashboardState
               else
                 ...requests.map((doc) {
                   final data = doc.data();
-                  final status =
-                      (data['status'] ?? 'active').toString();
+                  final status = (data['status'] ?? 'active').toString();
                   final mine = belongsToThisDriver(data);
                   final isNew = status.toLowerCase() == 'active';
 
@@ -861,7 +825,7 @@ class _AmbulanceDashboardState
                                     foregroundColor: Colors.white,
                                   ),
                                 ),
-                              if (mine && status == 'accepted')
+                              if (mine && status.toLowerCase() == 'accepted')
                                 ElevatedButton(
                                   onPressed: () => updateEmergencyStatus(
                                     doc.id,
@@ -869,20 +833,16 @@ class _AmbulanceDashboardState
                                   ),
                                   child: const Text('Start Response'),
                                 ),
-                              if (mine && status == 'responding')
+                              if (mine && status.toLowerCase() == 'responding')
                                 ElevatedButton(
-                                  onPressed: () => updateEmergencyStatus(
-                                    doc.id,
-                                    'arrived',
-                                  ),
+                                  onPressed: () =>
+                                      updateEmergencyStatus(doc.id, 'arrived'),
                                   child: const Text('Arrived'),
                                 ),
-                              if (mine && status == 'arrived')
+                              if (mine && status.toLowerCase() == 'arrived')
                                 ElevatedButton(
-                                  onPressed: () => updateEmergencyStatus(
-                                    doc.id,
-                                    'resolved',
-                                  ),
+                                  onPressed: () =>
+                                      updateEmergencyStatus(doc.id, 'resolved'),
                                   child: const Text('Complete'),
                                 ),
                             ],

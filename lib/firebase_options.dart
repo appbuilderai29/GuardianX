@@ -1,5 +1,7 @@
-import 'package:firebase_core/firebase_core.dart';
+// File: lib/firebase_options.dart
+
 import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
@@ -10,6 +12,7 @@ class DefaultFirebaseOptions {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
+
       default:
         throw UnsupportedError(
           'DefaultFirebaseOptions are not supported for this platform.',
@@ -24,6 +27,7 @@ class DefaultFirebaseOptions {
     projectId: 'guardianx-2026',
     storageBucket: 'guardianx-2026.firebasestorage.app',
   );
+
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyDDnWxAn6J9fyX1mjOQ0-rZ8W1_iMzFn74',
     appId: '1:924280192529:web:8b66358ed3cd2efc95bbb0',

@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'police_citizens_screen.dart';
 import 'police_emergencies_screen.dart';
@@ -130,15 +129,7 @@ class _PoliceDashboardState extends State<PoliceDashboard> {
   }
 
   Future<void> callEmergencyNumber() async {
-    final uri = Uri(scheme: 'tel', path: '112');
-
-    try {
-      if (!await launchUrl(uri)) {
-        showMessage('Unable to open the phone dialer.');
-      }
-    } catch (_) {
-      showMessage('Unable to open the phone dialer.');
-    }
+    showMessage('Please call 112 using your phone dialer.');
   }
 
   Widget dashboardCard({
